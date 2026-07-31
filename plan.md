@@ -22,7 +22,13 @@ collection. Checkboxes updated as work lands.
       to HF, and `train-cnn` now excludes pursuit by default.
 - [x] 6. 3D-eyeball future-proofing: every new sample now logs raw eye
       landmarks (18 pts), 4x4 head transform, interocular px, timestamp.
-- [ ] 7. Commit + push all repos; update research REPORT with new results.
+- [x] 7. Commit + push all repos; research REPORT addendum §8b written.
+- [x] 8. (bonus) `gazekit/eyeball.py` — 3D eyeball model prototype drafted
+      by a subagent, verified: imports clean, LOSO evaluate() ready, waits
+      gracefully for raw-landmark sessions.
+
+**STATUS: all executable-now items complete — blocked on human data
+collection (see below).**
 
 ## Blocked on Wilson (human data collection)
 
