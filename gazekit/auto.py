@@ -43,23 +43,31 @@ class AutoLog:
 
 
 def dataset_state(root="data/dataset"):
-    tags, n = set(), 0
+    tags, n, days = set(), 0, set()
     for jl in Path(root).glob("session_*/samples.jsonl"):
+        days.add(jl.parent.name.split("_")[1][:8])
         for line in open(jl):
             rec = json.loads(line)
             if rec.get("meta"):
                 continue
             tags.add(rec.get("tag"))
             n += 1
-    return tags, n
+    return tags, n, days
 
 
 def build_plan(full=False):
-    tags, n_samples = dataset_state()
+    tags, n_samples, days = dataset_state()
     have_blinks = Path("data/blink_profile.json").exists()
     plan = []
     if full or not have_blinks:
         plan.append(("blinks", "blink calibration (~25 s, voice-guided)"))
+    today = time.strftime("%Y%m%d")
+    if days and today not in days and not full:
+        # first run of a new day: the 2-min daily probe (new lighting/day
+        # coverage) replaces a full recalibration
+        plan.append(("daily", "daily probe (~2 min, new day detected)"))
+        plan.append(("iterate", "clean + train + validate + evaluate + update"))
+        return plan, n_samples
     plan.append(("calibrate", "gaze calibration (~2 min)"))
     for tag, desc in (("vor", "head-movement training (~1 min)"),
                       ("posture", "3-posture grid (~2 min)"),
@@ -124,7 +132,7 @@ def run(camera_index=0, full=False, cnn="auto", ambient_after=True):
                     log.event(name, "result",
                               verdict=rep.get("verdict"),
                               mean_error_px=rep.get("mean_error_px"))
-            elif name in ("vor", "posture", "edges", "pursuit"):
+            elif name in ("vor", "posture", "edges", "pursuit", "daily"):
                 from .collect import run as collect_run
                 status, _ = step(name, lambda n=name: collect_run(
                     n, camera_index=camera_index))
@@ -143,7 +151,7 @@ def run(camera_index=0, full=False, cnn="auto", ambient_after=True):
                 return
 
         # CNN: explicit yes, or auto once there is enough data
-        _, n_samples = dataset_state()
+        _, n_samples, _ = dataset_state()
         want_cnn = cnn == "yes" or (cnn == "auto"
                                     and n_samples >= CNN_MIN_SAMPLES)
         if want_cnn:

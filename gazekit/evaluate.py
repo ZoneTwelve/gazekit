@@ -328,6 +328,16 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
             updated = True
             print("\nsingle session — model saved")
 
+    # 3D eyeball prototype: report alongside ridge once raw-landmark
+    # sessions exist (harmless no-op until then)
+    try:
+        from .eyeball import evaluate as eyeball_eval
+        eb = eyeball_eval(dataset_root)
+        if eb is not None:
+            report["eyeball_loso_px"] = round(float(eb), 1)
+    except Exception as e:
+        print(f"  (eyeball eval skipped: {e})")
+
     entry = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), **report,
              "pruned": sum(len(v) for v in load_pruned(root).values()),
              "updated": updated}
