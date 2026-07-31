@@ -272,6 +272,26 @@ def evaluate(recs, screen):
                  for t in sorted({r["tag"] for r in recs})},
     }
 
+    # VLM condition slicing: once Florence-2 annotations exist, break the
+    # LOSO error down by environment condition — this is how the VLM feeds
+    # optimization (condition labels as context for slicing/weighting/the
+    # bandit), while the reward signal itself stays prediction error
+    ann_path = Path("data/context/annotations.jsonl")
+    if ann_path.exists() and loso_clusters:
+        flags = {}
+        for line in open(ann_path):
+            a = json.loads(line)
+            flags[a["session"]] = [k for k in ("glasses", "dark",
+                                               "lamp_or_window") if a.get(k)]
+        by_cond = {}
+        for c in loso_clusters:
+            for f in flags.get(c["session"], ["unlabeled"]) or ["plain"]:
+                by_cond.setdefault(f, []).append(c["err"])
+        if by_cond:
+            report["per_condition_px"] = {
+                k: round(float(np.mean(v)), 1)
+                for k, v in sorted(by_cond.items())}
+
     # calibration-aware fit on all data (deployed candidate)
     m = GazeModel(tuple(screen))
     loto = _fit(m, recs)
@@ -325,6 +345,9 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
         print("  only 1 session — cross-session metrics need >= 2; "
               "collect more and re-run")
     print(f"  interpolation (leave-target-out): {report['loto_px']}px")
+    if "per_condition_px" in report:
+        print("  per condition (VLM labels): " + "  ".join(
+            f"{k}={v}px" for k, v in report["per_condition_px"].items()))
     cov = report["coverage"]
     print(f"  coverage: {cov['days']} day(s), "
           f"{cov['pose_gt10deg_pct']}% samples with head >10° off, "
