@@ -1,0 +1,257 @@
+"""Ambient trainer: runs while you work. Every 40-110 s a small dot pops up
+over whatever you're doing (click-through, always on top). Look at it for
+~2 s and it disappears.
+
+  ~40% of popups are OLD calibration points  -> measures real accuracy drift
+  ~60% are NEW random points                 -> fresh training data
+
+An attention check (median gaze must land near the dot) discards popups you
+ignored. Accepted explore points refit the ridge model every few samples;
+validation errors are logged to data/ambient_log.jsonl and a rolling report
+prints in the terminal. If accuracy degrades badly you get a macOS
+notification suggesting recalibration.
+
+Run it in a spare terminal:  python -m gazekit ambient      (Ctrl+C to stop)
+"""
+
+import json
+import random
+import subprocess
+import time
+from pathlib import Path
+
+import numpy as np
+from AppKit import (NSApplication, NSApplicationActivationPolicyAccessory,
+                    NSBackingStoreBuffered, NSBezierPath, NSColor, NSMakeRect,
+                    NSScreen, NSScreenSaverWindowLevel, NSView, NSWindow,
+                    NSWindowStyleMaskBorderless)
+from Foundation import NSDate, NSRunLoop
+
+from .camera import open_camera, read_mirrored
+from .dataset import DatasetWriter, load_dwell_features
+from .model import GazeModel
+from .tracker import FaceTracker
+
+DOT = 72                 # overlay window size, points
+DWELL_S = 1.4            # sampling time after the settle animation
+SETTLE_S = 0.5
+VALIDATE_P = 0.4         # fraction of popups that re-test old points
+ATTENTION_RADIUS = 300.0 # median gaze must land this close, else discarded
+REFIT_EVERY = 5          # accepted explore points between ridge refits
+DEGRADE_PX = 260.0       # rolling validation error that triggers a warning
+
+
+class _DotView(NSView):
+    phase = 1.0
+
+    def drawRect_(self, rect):
+        NSColor.clearColor().set()
+        c = DOT / 2.0
+        r_out = 26 - 16 * min(self.phase, 1.0)
+        NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.62, 0.1, 0.95).set()
+        ring = NSBezierPath.bezierPathWithOvalInRect_(
+            NSMakeRect(c - r_out, c - r_out, 2 * r_out, 2 * r_out))
+        ring.setLineWidth_(3.0)
+        ring.stroke()
+        NSColor.whiteColor().set()
+        NSBezierPath.bezierPathWithOvalInRect_(
+            NSMakeRect(c - 4, c - 4, 8, 8)).fill()
+
+
+class OverlayDot:
+    """Borderless, transparent, click-through, always-on-top dot window."""
+
+    def __init__(self):
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        app.finishLaunching()  # windows may never display without this
+        self.screen_h = NSScreen.mainScreen().frame().size.height
+        self.win = NSWindow.alloc(
+        ).initWithContentRect_styleMask_backing_defer_(
+            NSMakeRect(0, 0, DOT, DOT), NSWindowStyleMaskBorderless,
+            NSBackingStoreBuffered, False)
+        self.win.setReleasedWhenClosed_(False)
+        self.win.setOpaque_(False)
+        self.win.setBackgroundColor_(NSColor.clearColor())
+        # screensaver level + fullscreen-auxiliary so the dot floats over
+        # everything, including fullscreen browser Spaces
+        self.win.setLevel_(NSScreenSaverWindowLevel)
+        self.win.setIgnoresMouseEvents_(True)
+        self.win.setCollectionBehavior_(
+            (1 << 0)      # NSWindowCollectionBehaviorCanJoinAllSpaces
+            | (1 << 8))   # NSWindowCollectionBehaviorFullScreenAuxiliary
+        self.view = _DotView.alloc().initWithFrame_(NSMakeRect(0, 0, DOT, DOT))
+        self.win.setContentView_(self.view)
+
+    def show(self, x: float, y: float, phase: float):
+        """x, y in top-left-origin screen points (our gaze coordinates)."""
+        self.view.phase = phase
+        self.win.setFrameOrigin_((x - DOT / 2, self.screen_h - y - DOT / 2))
+        self.view.setNeedsDisplay_(True)
+        self.win.orderFrontRegardless()
+        self.win.displayIfNeeded()
+        self._pump()
+
+    def hide(self):
+        self.win.orderOut_(None)
+        self._pump()
+
+    @staticmethod
+    def _pump():
+        NSRunLoop.currentRunLoop().runUntilDate_(
+            NSDate.dateWithTimeIntervalSinceNow_(0.01))
+
+
+def _notify(title, text):
+    try:
+        subprocess.run(["osascript", "-e",
+                        f'display notification "{text}" with title "{title}"'],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
+def overlay_test(seconds=6.0):
+    """Visibility check: sweep the dot around the screen for a few seconds.
+    Run `gazekit ambient --test` and watch for an orange dot."""
+    import math
+    from .screen import screen_size
+    from .ui import say
+    sw, sh = screen_size()
+    dot = OverlayDot()
+    say("watch for the dot")
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < seconds:
+        t = time.monotonic() - t0
+        x = sw * (0.5 + 0.4 * math.cos(2 * math.pi * t / 3.0))
+        y = sh * (0.5 + 0.35 * math.sin(2 * math.pi * t / 3.0))
+        dot.show(x, y, 1.0)
+        time.sleep(0.02)
+    dot.hide()
+    print("test done — the dot should have circled the screen for "
+          f"{seconds:.0f}s. If you saw nothing, tell me your monitor setup "
+          "(built-in / external / fullscreen app).")
+
+
+def _history_points(dataset_root, limit=40):
+    _, Y = load_dwell_features(dataset_root)
+    if Y is None:
+        return []
+    return [tuple(t) for t in np.unique(Y, axis=0)][:limit]
+
+
+def run(camera_index=0, model_path="data/gaze_model.pkl",
+        dataset_root="data/dataset", landmarker="models/face_landmarker.task",
+        interval=(15.0, 45.0), screen=None, voice=True):
+    from .screen import screen_size
+    sw, sh = screen or screen_size()
+    model = GazeModel.load(model_path)
+    tracker = FaceTracker(landmarker)
+    cap = open_camera(camera_index)
+    writer = DatasetWriter(dataset_root, (sw, sh))
+    dot = OverlayDot()
+    log_path = Path("data/ambient_log.jsonl")
+    log_f = open(log_path, "a")
+
+    base_X, base_Y = load_dwell_features(dataset_root)
+    new_X, new_Y = [], []
+    history = _history_points(dataset_root)
+    val_errors = []
+    accepted = tested = 0
+    rng = random.Random()
+
+    print("ambient trainer running — dots will pop up while you work. "
+          "Ctrl+C to stop.")
+    first = True
+    try:
+        while True:
+            # first dot comes fast so you can see it's working
+            wait = rng.uniform(6.0, 12.0) if first else rng.uniform(*interval)
+            first = False
+            print(f"          next dot in {wait:.0f}s")
+            t_end = time.monotonic() + wait
+            while time.monotonic() < t_end:
+                cap.grab()          # keep the driver buffer fresh
+                time.sleep(0.15)
+
+            is_val = bool(history) and rng.random() < VALIDATE_P
+            if is_val:
+                target = rng.choice(history)
+            else:
+                target = (rng.uniform(0.05, 0.95) * sw,
+                          rng.uniform(0.06, 0.94) * sh)
+
+            if voice:
+                from .ui import say
+                say("look")
+            # settle animation, frames discarded (longer: hear cue + saccade)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < SETTLE_S + 0.4:
+                dot.show(*target, (time.monotonic() - t0) / SETTLE_S)
+                frame = read_mirrored(cap)
+                if frame is not None:
+                    tracker.process(frame)
+
+            feats, kept = [], []
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < DWELL_S:
+                dot.show(*target, 1.0)
+                frame = read_mirrored(cap)
+                if frame is None:
+                    continue
+                obs = tracker.process(frame, want_crops=True)
+                if obs.ok and obs.blink < 0.3:
+                    feats.append(obs.features)
+                    kept.append(obs)
+            dot.hide()
+
+            if len(feats) < 8:
+                continue  # blinked through it / face lost — ignore popup
+            preds = np.array([model.predict(f) for f in feats])
+            med = np.median(preds, axis=0)
+            err = float(np.hypot(med[0] - target[0], med[1] - target[1]))
+            if err > ATTENTION_RADIUS:
+                continue  # user (probably) never looked — discard
+
+            if is_val:
+                tested += 1
+                val_errors.append(err)
+                recent = val_errors[-10:]
+                log_f.write(json.dumps({
+                    "t": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": "validate",
+                    "target": [round(target[0]), round(target[1])],
+                    "error_px": round(err, 1)}) + "\n")
+                log_f.flush()
+                print(f"[validate #{tested}] {err:5.0f}px at "
+                      f"({target[0]:.0f},{target[1]:.0f})  "
+                      f"rolling({len(recent)}): {np.mean(recent):.0f}px")
+                if len(recent) >= 5 and np.mean(recent) > DEGRADE_PX:
+                    _notify("gazekit", f"accuracy degraded to "
+                            f"{np.mean(recent):.0f}px — consider recalibrating")
+                    val_errors.clear()
+            else:
+                accepted += 1
+                for o in kept:
+                    writer.add(o, target, tag="ambient")
+                new_X.extend(feats)
+                new_Y.extend([target] * len(feats))
+                print(f"[learn    #{accepted}] +{len(feats)} samples at "
+                      f"({target[0]:.0f},{target[1]:.0f})")
+                if accepted % REFIT_EVERY == 0 and base_X is not None:
+                    model.refit(np.vstack([base_X, new_X]),
+                                np.vstack([base_Y, new_Y]))
+                    model.save(model_path, {"refit_from": "ambient",
+                                            "explore_points": accepted,
+                                            "validations": tested})
+                    print(f"          model refit + saved "
+                          f"({len(base_X) + len(new_X)} samples)")
+                    history = _history_points(dataset_root)
+    except KeyboardInterrupt:
+        print("\nstopping.")
+    finally:
+        log_f.close()
+        n = writer.close()
+        if n:
+            print(f"dataset: {n} ambient samples appended under {writer.dir}")
+        tracker.close()
+        cap.release()

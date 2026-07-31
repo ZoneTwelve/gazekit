@@ -1,0 +1,10 @@
+# personal biometric data — never commit
+data/
+
+# downloaded model weights (see README setup)
+models/*.task
+
+__pycache__/
+*.pyc
+.DS_Store
+.env
