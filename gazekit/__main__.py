@@ -75,6 +75,12 @@ def main():
     it.add_argument("--cnn", action="store_true",
                     help="also train the CNN on the cleaned dataset")
 
+    an = sub.add_parser("annotate",
+                        help="Florence-2 environment labels for session "
+                             "snapshots (offline; downloads ~0.5GB on first "
+                             "run)")
+    an.add_argument("--redo", action="store_true")
+
     t = sub.add_parser("train-cnn",
                        help="post-train MobileNetV2 on your calibration dataset")
     t.add_argument("--dataset", default="data/dataset")
@@ -153,6 +159,10 @@ def main():
         from .evaluate import run
         run(do_clean=not args.no_clean, do_update=not args.no_update,
             train_cnn=args.cnn)
+
+    elif args.cmd == "annotate":
+        from .annotate import run
+        run(redo=args.redo)
 
     elif args.cmd == "train-cnn":
         from .cnn import train

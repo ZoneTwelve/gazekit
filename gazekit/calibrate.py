@@ -253,6 +253,9 @@ def run(camera_index=0, points=16, rounds=2, model_out="data/gaze_model.pkl",
 
     try:
         environment_gate(win, cap, tracker)
+        frame = read_mirrored(cap)
+        if frame is not None:
+            writer.save_context(frame)
 
         grid = grid_points(sw, sh, points)
         Xs, Ys = [], []

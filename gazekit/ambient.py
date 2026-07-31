@@ -339,6 +339,7 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
                     frame = read_mirrored(cap)
                     if frame is not None and tracker.process(frame).ok:
                         last_face = now
+                        writer.save_context(frame)
                     elif now >= t_end and not paused:
                         paused = True
                         log("paused", reason="no-face")

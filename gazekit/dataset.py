@@ -27,6 +27,20 @@ class DatasetWriter:
         self._n = 0
         self._f.write(json.dumps({"meta": True, "screen_size": list(screen_size)}) + "\n")
 
+    def save_context(self, frame_bgr):
+        """One full-frame snapshot per session for offline environment
+        annotation (`gazekit annotate`). Stored OUTSIDE data/dataset/ so it
+        never ends up in the published dataset tar — full-face frames are
+        far more identifying than 64x48 eye crops."""
+        ctx = self.dir.parent.parent / "context"
+        ctx.mkdir(parents=True, exist_ok=True)
+        path = ctx / f"{self.dir.name}.jpg"
+        if not path.exists():
+            h, w = frame_bgr.shape[:2]
+            scale = 640 / max(w, 1)
+            small = cv2.resize(frame_bgr, (640, int(h * scale)))
+            cv2.imwrite(str(path), small, [cv2.IMWRITE_JPEG_QUALITY, 88])
+
     def add(self, obs, target_xy: tuple[float, float], tag: str = "calib"):
         if obs.eye_crops is None:
             return

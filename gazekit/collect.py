@@ -204,6 +204,9 @@ def run(scenario, camera_index=0, dataset_root="data/dataset",
 
     try:
         environment_gate(win, cap, tracker)
+        frame = read_mirrored(cap)
+        if frame is not None:
+            writer.save_context(frame)
 
         if scenario == "pursuit":
             info_screen(win, ["Smooth pursuit sweep (~45 s).",
