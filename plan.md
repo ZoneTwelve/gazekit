@@ -17,8 +17,9 @@ collection. Checkboxes updated as work lands.
 - [x] 4. Hybrid ensemble sweep → `research/data/ensemble_sweep.csv`.
       U-shaped: blend 107.6px vs ridge 147.3 / CNN 120.0 alone.
       Deployed α = 0.4 ridge / 0.6 CNN in `live --backend hybrid`.
-- [ ] 5. Pursuit-data ablation: A (with) vs B (without) training in
-      progress; keep the better one as data/gaze_cnn.pt, upload to HF.
+- [x] 5. Pursuit-data ablation: WITHOUT pursuit wins (13.7% vs 14.5% on the
+      887-sample held-out session). Deployed as data/gaze_cnn.pt, uploaded
+      to HF, and `train-cnn` now excludes pursuit by default.
 - [x] 6. 3D-eyeball future-proofing: every new sample now logs raw eye
       landmarks (18 pts), 4x4 head transform, interocular px, timestamp.
 - [ ] 7. Commit + push all repos; update research REPORT with new results.

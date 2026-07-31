@@ -102,7 +102,11 @@ class CropDataset(Dataset):
 
 
 def train(dataset_root="data/dataset", out="data/gaze_cnn.pt",
-          epochs=40, batch_size=64, lr=3e-4, patience=6, exclude_tags=()):
+          epochs=40, batch_size=64, lr=3e-4, patience=6,
+          exclude_tags=("pursuit",)):
+    # pursuit excluded by default: ablation on a 887-sample held-out session
+    # scored 13.7% (without) vs 14.5% (with) — the lag-compensated labels
+    # hurt more than the extra coverage helps
     from .dataset import load_sessions
     tagged = list(load_sessions(dataset_root, with_session=True,
                                 exclude_tags=exclude_tags))
