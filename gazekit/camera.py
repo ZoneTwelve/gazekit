@@ -41,8 +41,9 @@ def open_camera(index: int) -> cv2.VideoCapture:
             f"Could not open camera {index}. If this is the first run, grant "
             "camera permission to your terminal in System Settings > Privacy "
             "& Security > Camera, then retry.")
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    # 1080p: sharper iris landmarks cut the ~50px per-frame jitter floor
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     return cap
 
 

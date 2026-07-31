@@ -308,6 +308,7 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
     policy = TargetPolicy(sw, sh)
     print(policy.summary())
     suspect_queue = []   # regions where a triage confirmed model error
+    anchor_deltas = []   # (target - prediction) from recent looked popups
     val_errors = []
     accepted = tested = 0
     backoff = 1.0
@@ -398,6 +399,23 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
             backoff = 1.0
 
             policy.update(*target, err)
+
+            # session auto-anchor: the measured offset from every engaged
+            # popup feeds back as a bias correction (Finding 1: per-session
+            # vertical bias swings ±170px — this cancels it while you work)
+            preds = np.array([model.predict(f) for f in feats])
+            med = np.median(preds, axis=0)
+            anchor_deltas.append(np.array(target) - med)
+            if len(anchor_deltas) >= 3:
+                shift = 0.5 * np.median(anchor_deltas, axis=0)
+                model.bias = model.bias + shift
+                anchor_deltas.clear()
+                if float(np.hypot(*shift)) > 15:
+                    log("anchor", shift=[round(float(shift[0]), 1),
+                                         round(float(shift[1]), 1)])
+                    print(f"[anchor   ] bias nudged by "
+                          f"({shift[0]:+.0f},{shift[1]:+.0f})px")
+
             if is_val:
                 tested += 1
                 val_errors.append(err)

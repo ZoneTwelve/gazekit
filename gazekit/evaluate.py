@@ -78,6 +78,19 @@ def clean(recs, screen):
         stats[reason] = stats.get(reason, 0) + 1
 
     stats = {}
+    # stage 0: frozen frames — a stalled camera repeats identical features;
+    # duplicates add no information and overweight one instant
+    prev_key = None
+    fresh = []
+    for r in sorted(recs, key=lambda r: (r["session"], r["i"])):
+        key = (r["session"], tuple(np.round(r["X"][:8], 6)))
+        if key == prev_key:
+            prune(r, "frozen-frame")
+        else:
+            fresh.append(r)
+        prev_key = key
+    recs = fresh
+
     # stage 1: within-VISIT MAD on iris features (glitch frames). A cluster
     # (session, target) can contain several dwell visits — e.g. calibration
     # round 1 and round 2 at different postures — so split on gaps in the
@@ -156,8 +169,11 @@ def evaluate(recs, screen):
                   np.array([r["Y"] for r in train]),
                   sample_weight=_weights(train))
             loso_clusters.extend(_cluster_err(m, test))
-        report["loso_px"] = round(float(np.mean(
-            [c["err"] for c in loso_clusters])), 1)
+        errs = np.array([c["err"] for c in loso_clusters])
+        report["loso_px"] = round(float(errs.mean()), 1)
+        report["loso_p50_px"] = round(float(np.percentile(errs, 50)), 1)
+        report["loso_p90_px"] = round(float(np.percentile(errs, 90)), 1)
+        report["loso_p95_px"] = round(float(np.percentile(errs, 95)), 1)
         report["loso_x_px"] = round(float(np.mean(
             [c["err_xy"][0] for c in loso_clusters])), 1)
         report["loso_y_px"] = round(float(np.mean(
@@ -177,6 +193,28 @@ def evaluate(recs, screen):
         report["region_map_px"] = [
             [round(float(np.mean(cell)), 0) if cell else None
              for cell in row] for row in grid]
+
+    # coverage: which edge cases the dataset HAS vs still needs — cleaning
+    # protects them (vor/posture exempt from MAD; extreme-pose samples are
+    # never pruned for being extreme), this reports whether they exist
+    pose = np.degrees(np.array([r["X"][8:10] for r in recs]))
+    dev = np.zeros(len(recs))
+    for s in sessions:
+        mask = np.array([r["session"] == s for r in recs])
+        dev[mask] = np.linalg.norm(
+            pose[mask] - np.median(pose[mask], axis=0), axis=1)
+    w, h = screen
+    Yv = np.array([r["Y"] for r in recs])
+    edge_band = ((Yv[:, 0] < 0.1 * w) | (Yv[:, 0] > 0.9 * w)
+                 | (Yv[:, 1] < 0.1 * h) | (Yv[:, 1] > 0.9 * h))
+    days = {r["session"].split("_")[1][:8] for r in recs}
+    report["coverage"] = {
+        "days": len(days),
+        "pose_gt10deg_pct": round(100 * float((dev > 10).mean()), 1),
+        "screen_edge_pct": round(100 * float(edge_band.mean()), 1),
+        "tags": {t: sum(1 for r in recs if r["tag"] == t)
+                 for t in sorted({r["tag"] for r in recs})},
+    }
 
     # leave-one-target-out on the pooled data (interpolation quality)
     m = GazeModel(tuple(screen))
@@ -212,7 +250,9 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
           f"{report['sessions']} sessions):")
     if "loso_px" in report:
         print(f"  cross-session (LOSO): {report['loso_px']}px  "
-              f"(x {report['loso_x_px']} / y {report['loso_y_px']})")
+              f"(x {report['loso_x_px']} / y {report['loso_y_px']})  "
+              f"p50/p90/p95: {report['loso_p50_px']}/"
+              f"{report['loso_p90_px']}/{report['loso_p95_px']}")
         print(f"  per tag: " + "  ".join(
             f"{t}={e}px" for t, e in report["per_tag_px"].items()))
         print("  region map (px):")
@@ -223,6 +263,19 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
         print("  only 1 session — cross-session metrics need >= 2; "
               "collect more and re-run")
     print(f"  interpolation (leave-target-out): {report['loto_px']}px")
+    cov = report["coverage"]
+    print(f"  coverage: {cov['days']} day(s), "
+          f"{cov['pose_gt10deg_pct']}% samples with head >10° off, "
+          f"{cov['screen_edge_pct']}% near screen edges")
+    missing = []
+    if cov["days"] < 3:
+        missing.append("more DAYS (different lighting)")
+    if cov["pose_gt10deg_pct"] < 10:
+        missing.append("head-pose extremes (collect vor)")
+    if cov["screen_edge_pct"] < 8:
+        missing.append("screen edges (collect edges)")
+    if missing:
+        print(f"  -> generalization gaps: {'; '.join(missing)}")
 
     # update gate: newest session held out, candidate vs deployed
     updated = False

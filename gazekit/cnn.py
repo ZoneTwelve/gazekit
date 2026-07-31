@@ -64,8 +64,11 @@ class CropDataset(Dataset):
 
     def __getitem__(self, i):
         r, l, head, tgt = self.samples[i]
-        r = r.astype(np.float32) / 255.0
-        l = l.astype(np.float32) / 255.0
+        # MPIIGaze: illumination ~35% of cross-domain error; hist-eq at load
+        # time keeps stored crops raw and old sessions compatible
+        import cv2
+        r = cv2.equalizeHist(r).astype(np.float32) / 255.0
+        l = cv2.equalizeHist(l).astype(np.float32) / 255.0
         if self.train:  # light photometric jitter for lighting robustness
             gain = np.random.uniform(0.85, 1.15)
             bias = np.random.uniform(-0.08, 0.08)
@@ -165,9 +168,12 @@ class CnnPredictor:
     def predict(self, obs) -> np.ndarray | None:
         if obs.eye_crops is None:
             return None
+        import cv2
         r, l = obs.eye_crops
-        rt = torch.from_numpy(r.astype(np.float32) / 255.0)[None, None]
-        lt = torch.from_numpy(l.astype(np.float32) / 255.0)[None, None]
+        rt = torch.from_numpy(
+            cv2.equalizeHist(r).astype(np.float32) / 255.0)[None, None]
+        lt = torch.from_numpy(
+            cv2.equalizeHist(l).astype(np.float32) / 255.0)[None, None]
         hd = torch.tensor([[obs.yaw, obs.pitch, obs.roll]],
                           dtype=torch.float32) / 30.0
         with torch.no_grad():

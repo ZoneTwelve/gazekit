@@ -40,6 +40,7 @@ class DatasetWriter:
             "features": [float(v) for v in obs.features],
             "yaw": float(obs.yaw), "pitch": float(obs.pitch),
             "roll": float(obs.roll), "blink": float(obs.blink),
+            "brightness": round(float(obs.brightness), 1),
         }) + "\n")
 
     def close(self):
