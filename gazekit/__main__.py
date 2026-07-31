@@ -55,6 +55,14 @@ def main():
     a.add_argument("--test", action="store_true",
                    help="6s overlay visibility check, no camera needed")
 
+    v = sub.add_parser("verify",
+                       help="mouse-as-ground-truth error measurement")
+    v.add_argument("--camera", type=int, default=0)
+    v.add_argument("--mode", choices=("free", "path"), default="free",
+                   help="free = roam anywhere; path = follow a wide track")
+    v.add_argument("--teach", action="store_true",
+                   help="also save samples for training (tag: mouse)")
+
     it = sub.add_parser("iterate",
                         help="dataset lifecycle: clean/train/validate/"
                              "evaluate/update")
@@ -132,6 +140,10 @@ def main():
             run(camera_index=args.camera,
                 interval=(args.min_wait, args.max_wait),
                 voice=not args.quiet)
+
+    elif args.cmd == "verify":
+        from .verify import run
+        run(camera_index=args.camera, mode=args.mode, teach=args.teach)
 
     elif args.cmd == "iterate":
         from .evaluate import run

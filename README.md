@@ -65,6 +65,17 @@ $PY -m gazekit collect pursuit    # smooth-pursuit sweep, whole-screen
 `posture`/`edges` immediately refit the ridge model on the newest sessions;
 all scenarios (plus live-mode clicks) feed the CNN dataset for `train-cnn`.
 
+## Verifying accuracy with the mouse
+
+```sh
+$PY -m gazekit verify              # roam: look AT your cursor, live error HUD
+$PY -m gazekit verify --mode path  # follow a wide guided track to 100%
+$PY -m gazekit verify --teach      # also save samples for retraining
+```
+
+Ground truth = your cursor (lag-compensated); shows live + per-region
+error and appends a summary to `data/verify_log.jsonl`.
+
 ## Dataset lifecycle
 
 ```sh

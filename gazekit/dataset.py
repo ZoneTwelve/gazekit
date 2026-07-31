@@ -51,7 +51,7 @@ class DatasetWriter:
 
 
 DWELL_TAGS = {"calib", "probe", "posture", "edges", "click", "repair", "vor",
-              "ambient"}
+              "ambient", "mouse"}
 
 
 def load_pruned(root: str | Path) -> dict[str, set]:

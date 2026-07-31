@@ -24,7 +24,7 @@ import numpy as np
 from .dataset import DWELL_TAGS, load_pruned
 from .model import GazeModel
 
-LOW_TRUST_TAGS = {"click", "ambient"}
+LOW_TRUST_TAGS = {"click", "ambient", "mouse"}
 # vor/posture clusters have deliberately large feature spread (head moves
 # on purpose) — MAD pruning would delete exactly the valuable samples
 HIGH_VARIANCE_TAGS = {"vor", "posture"}

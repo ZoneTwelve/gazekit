@@ -164,6 +164,52 @@ def _history_points(dataset_root, limit=40):
     return [tuple(t) for t in np.unique(Y, axis=0)][:limit]
 
 
+def _popup(dot, cap, tracker, model, target, voice, cue="look"):
+    """One guided popup: animation, then gated sampling.
+    Returns (outcome, err, feats, kept):
+      outcome 'no-face'  — person not visible during the dwell
+              'occluded' — face there but eyes unreadable (blinks/occlusion)
+              'looked'   — enough samples; err = median prediction error"""
+    if voice:
+        from .ui import say
+        say(cue)
+    total = REACT_S + SHRINK_S + FIX_S
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < total:
+        t = time.monotonic() - t0
+        phase = min(max((t - REACT_S) / SHRINK_S, 0.0), 1.0)
+        dot.show(*target, phase)
+        frame = read_mirrored(cap)
+        if frame is not None:
+            tracker.process(frame)
+
+    feats, kept = [], []
+    n_frames = n_face = 0
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < DWELL_S:
+        dot.show(*target, 1.0)
+        frame = read_mirrored(cap)
+        if frame is None:
+            continue
+        n_frames += 1
+        obs = tracker.process(frame, want_crops=True)
+        if obs.ok:
+            n_face += 1
+            if obs.blink < 0.3:
+                feats.append(obs.features)
+                kept.append(obs)
+    dot.hide()
+
+    if len(feats) < 8:
+        if n_face < 0.5 * max(n_frames, 1):
+            return "no-face", None, [], []
+        return "occluded", None, [], []
+    preds = np.array([model.predict(f) for f in feats])
+    med = np.median(preds, axis=0)
+    err = float(np.hypot(med[0] - target[0], med[1] - target[1]))
+    return "looked", err, feats, kept
+
+
 def run(camera_index=0, model_path="data/gaze_model.pkl",
         dataset_root="data/dataset", landmarker="models/face_landmarker.task",
         interval=(15.0, 45.0), screen=None, voice=True):
@@ -177,11 +223,19 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
     log_path = Path("data/ambient_log.jsonl")
     log_f = open(log_path, "a")
 
+    def log(kind, **kw):
+        rec = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": kind}
+        rec.update(kw)
+        log_f.write(json.dumps(rec) + "\n")
+        log_f.flush()
+
     base_X, base_Y = load_dwell_features(dataset_root)
     new_X, new_Y = [], []
     history = _history_points(dataset_root)
+    suspect_queue = []   # regions where a triage confirmed model error
     val_errors = []
     accepted = tested = 0
+    backoff = 1.0
     rng = random.Random()
 
     print("ambient trainer running — dots will pop up while you work. "
@@ -190,66 +244,86 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
     try:
         while True:
             # first dot comes fast so you can see it's working
-            wait = rng.uniform(6.0, 12.0) if first else rng.uniform(*interval)
+            wait = (rng.uniform(6.0, 12.0) if first
+                    else rng.uniform(*interval) * backoff)
             first = False
             print(f"          next dot in {wait:.0f}s")
             t_end = time.monotonic() + wait
-            while time.monotonic() < t_end:
-                cap.grab()          # keep the driver buffer fresh
+
+            # idle wait with presence monitoring: don't pop at an empty chair
+            last_face = time.monotonic()
+            last_check = 0.0
+            paused = False
+            while True:
+                now = time.monotonic()
+                if now >= t_end and now - last_face < 6.0:
+                    break
+                if now - last_check > 2.5:
+                    last_check = now
+                    frame = read_mirrored(cap)
+                    if frame is not None and tracker.process(frame).ok:
+                        last_face = now
+                    elif now >= t_end and not paused:
+                        paused = True
+                        log("paused", reason="no-face")
+                        print("          paused — nobody in front of the "
+                              "camera; resuming when you're back")
+                else:
+                    cap.grab()  # keep the driver buffer fresh
                 time.sleep(0.15)
+            if paused:
+                print("          welcome back")
 
             is_val = bool(history) and rng.random() < VALIDATE_P
-            if is_val:
+            if suspect_queue and not is_val:
+                bx, by = suspect_queue.pop(0)  # revisit confirmed-bad regions
+                target = (float(np.clip(bx + rng.uniform(-80, 80), 20, sw - 20)),
+                          float(np.clip(by + rng.uniform(-80, 80), 20, sh - 20)))
+            elif is_val:
                 target = rng.choice(history)
             else:
                 target = (rng.uniform(0.05, 0.95) * sw,
                           rng.uniform(0.06, 0.94) * sh)
 
-            if voice:
-                from .ui import say
-                say("look")
-            # guide animation, frames discarded: hold (reaction time) ->
-            # shrink (gaze rides the ring down) -> fixation settle
-            total = REACT_S + SHRINK_S + FIX_S
-            t0 = time.monotonic()
-            while time.monotonic() - t0 < total:
-                t = time.monotonic() - t0
-                phase = min(max((t - REACT_S) / SHRINK_S, 0.0), 1.0)
-                dot.show(*target, phase)
-                frame = read_mirrored(cap)
-                if frame is not None:
-                    tracker.process(frame)
+            outcome, err, feats, kept = _popup(dot, cap, tracker, model,
+                                               target, voice)
+            if outcome == "no-face":
+                log("skip", reason="absent")
+                backoff = min(backoff * 1.5, 6.0)
+                continue
+            if outcome == "occluded":
+                log("skip", reason="eyes-occluded")
+                continue
 
-            feats, kept = [], []
-            t0 = time.monotonic()
-            while time.monotonic() - t0 < DWELL_S:
-                dot.show(*target, 1.0)
-                frame = read_mirrored(cap)
-                if frame is None:
-                    continue
-                obs = tracker.process(frame, want_crops=True)
-                if obs.ok and obs.blink < 0.3:
-                    feats.append(obs.features)
-                    kept.append(obs)
-            dot.hide()
-
-            if len(feats) < 8:
-                continue  # blinked through it / face lost — ignore popup
-            preds = np.array([model.predict(f) for f in feats])
-            med = np.median(preds, axis=0)
-            err = float(np.hypot(med[0] - target[0], med[1] - target[1]))
             if err > ATTENTION_RADIUS:
-                continue  # user (probably) never looked — discard
+                # triage: is the model wrong, or were you just not looking?
+                time.sleep(1.0)
+                probe = (rng.uniform(0.35, 0.65) * sw,
+                         rng.uniform(0.35, 0.65) * sh)
+                o2, e2, _, _ = _popup(dot, cap, tracker, model, probe,
+                                      voice, cue="look again")
+                if o2 == "looked" and e2 <= ATTENTION_RADIUS:
+                    # you clearly engaged the recheck -> first miss was model
+                    suspect_queue.append(target)
+                    log("triage", result="model-suspect",
+                        target=[round(target[0]), round(target[1])],
+                        error_px=round(err, 1), recheck_px=round(e2, 1))
+                    print(f"[triage   ] model suspect at "
+                          f"({target[0]:.0f},{target[1]:.0f}) err {err:.0f}px "
+                          "— queued for extra training")
+                    backoff = 1.0
+                else:
+                    log("triage", result="user-away")
+                    backoff = min(backoff * 2.0, 8.0)
+                continue
+            backoff = 1.0
 
             if is_val:
                 tested += 1
                 val_errors.append(err)
                 recent = val_errors[-10:]
-                log_f.write(json.dumps({
-                    "t": time.strftime("%Y-%m-%d %H:%M:%S"), "kind": "validate",
-                    "target": [round(target[0]), round(target[1])],
-                    "error_px": round(err, 1)}) + "\n")
-                log_f.flush()
+                log("validate", target=[round(target[0]), round(target[1])],
+                    error_px=round(err, 1))
                 print(f"[validate #{tested}] {err:5.0f}px at "
                       f"({target[0]:.0f},{target[1]:.0f})  "
                       f"rolling({len(recent)}): {np.mean(recent):.0f}px")
@@ -263,6 +337,8 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
                     writer.add(o, target, tag="ambient")
                 new_X.extend(feats)
                 new_Y.extend([target] * len(feats))
+                log("learn", target=[round(target[0]), round(target[1])],
+                    n=len(feats))
                 print(f"[learn    #{accepted}] +{len(feats)} samples at "
                       f"({target[0]:.0f},{target[1]:.0f})")
                 if accepted % REFIT_EVERY == 0 and base_X is not None:
