@@ -158,7 +158,7 @@ def overlay_test():
 
 
 def _history_points(dataset_root, limit=40):
-    _, Y = load_dwell_features(dataset_root)
+    _, Y, _ = load_dwell_features(dataset_root)
     if Y is None:
         return []
     return [tuple(t) for t in np.unique(Y, axis=0)][:limit]
@@ -229,7 +229,7 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
         log_f.write(json.dumps(rec) + "\n")
         log_f.flush()
 
-    base_X, base_Y = load_dwell_features(dataset_root)
+    base_X, base_Y, base_w = load_dwell_features(dataset_root)
     new_X, new_Y = [], []
     history = _history_points(dataset_root)
     suspect_queue = []   # regions where a triage confirmed model error
@@ -343,7 +343,9 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
                       f"({target[0]:.0f},{target[1]:.0f})")
                 if accepted % REFIT_EVERY == 0 and base_X is not None:
                     model.refit(np.vstack([base_X, new_X]),
-                                np.vstack([base_Y, new_Y]))
+                                np.vstack([base_Y, new_Y]),
+                                np.concatenate([base_w,
+                                                np.ones(len(new_X))]))
                     model.save(model_path, {"refit_from": "ambient",
                                             "explore_points": accepted,
                                             "validations": tested})

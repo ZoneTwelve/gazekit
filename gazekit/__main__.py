@@ -40,8 +40,11 @@ def main():
 
     l = sub.add_parser("live", help="show the live gaze dot")
     l.add_argument("--camera", type=int, default=0)
-    l.add_argument("--backend", choices=("ridge", "cnn"), default="ridge")
+    l.add_argument("--backend", choices=("ridge", "cnn", "hybrid"),
+                   default="ridge")
     l.add_argument("--model", default=None)
+    l.add_argument("--no-align", action="store_true",
+                   help="skip the 3-point quick alignment at start")
 
     a = sub.add_parser("ambient",
                        help="background trainer: popup dots while you work")
@@ -129,7 +132,7 @@ def main():
     elif args.cmd == "live":
         from .live import run
         run(camera_index=args.camera, backend=args.backend,
-            model_path=args.model)
+            model_path=args.model, align=not args.no_align)
 
     elif args.cmd == "ambient":
         if args.test:

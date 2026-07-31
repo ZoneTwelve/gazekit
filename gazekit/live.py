@@ -92,21 +92,69 @@ def _recenter(win, cap, tracker, predict, current_bias):
     return current_bias
 
 
+def _quick_align(win, cap, tracker, predict):
+    """3-point per-axis gain+offset correction on top of the frozen model —
+    kills session-to-session drift (posture, chair height, camera nudge)
+    in ~8 s. Returns (ax, bx, ay, by): corrected = a * pred + b."""
+    pts = [(0.5 * win.w, 0.5 * win.h), (0.22 * win.w, 0.25 * win.h),
+           (0.78 * win.w, 0.75 * win.h)]
+    P, T = [], []
+    for pt in pts:
+        preds = []
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 1.5:
+            frame = read_mirrored(cap)
+            if frame is None:
+                continue
+            obs = tracker.process(frame, want_crops=True)
+            img = win.canvas()
+            ui.draw_target(img, *pt, (time.monotonic() - t0) / 0.6, ui.GOOD)
+            ui.center_text(img, "quick alignment — look at the ring",
+                           int(win.h * 0.4), 0.8)
+            win.show(img)
+            if obs.ok and obs.blink < 0.3 and time.monotonic() - t0 > 0.6:
+                p = predict(obs)
+                if p is not None:
+                    preds.append(p)
+        if len(preds) >= 5:
+            P.append(np.median(np.array(preds), axis=0))
+            T.append(pt)
+    if len(P) < 2:
+        return (1.0, 0.0, 1.0, 0.0)
+    P, T = np.array(P), np.array(T)
+    out = []
+    for ax in (0, 1):
+        var = float(np.var(P[:, ax]))
+        if var < 1e-6:
+            out += [1.0, float(np.mean(T[:, ax]) - np.mean(P[:, ax]))]
+            continue
+        a = float(np.cov(P[:, ax], T[:, ax], bias=True)[0, 1] / var)
+        a = float(np.clip(a, 0.5, 1.8))
+        b = float(np.mean(T[:, ax]) - a * np.mean(P[:, ax]))
+        out += [a, b]
+    return tuple(out)
+
+
 def run(camera_index=0, backend="ridge", model_path=None,
         landmarker="models/face_landmarker.task", screen=None,
-        dataset_root="data/dataset"):
+        dataset_root="data/dataset", align=True):
     from .screen import screen_size
     from .filters import GazeSmoother
     sw, sh = screen or screen_size()
 
     ridge = cnn = None
-    if backend == "cnn":
+    if backend in ("cnn", "hybrid"):
         from .cnn import CnnPredictor
-        cnn = CnnPredictor(model_path or "data/gaze_cnn.pt", (sw, sh))
-    else:
-        ridge = GazeModel.load(model_path or "data/gaze_model.pkl")
+        cnn = CnnPredictor("data/gaze_cnn.pt" if backend == "hybrid"
+                           else (model_path or "data/gaze_cnn.pt"), (sw, sh))
+    if backend in ("ridge", "hybrid"):
+        ridge = GazeModel.load("data/gaze_model.pkl" if backend == "hybrid"
+                               else (model_path or "data/gaze_model.pkl"))
 
     def predict(obs):
+        if ridge is not None and cnn is not None:
+            pr, pc = ridge.predict(obs.features), cnn.predict(obs)
+            return pr if pc is None else (pr + pc) / 2.0
         if cnn is not None:
             return cnn.predict(obs)
         return ridge.predict(obs.features)
@@ -114,10 +162,10 @@ def run(camera_index=0, backend="ridge", model_path=None,
     active = ridge if ridge is not None else cnn
 
     # base data for click-teach refits (ridge backend only)
-    base_X, base_Y = (None, None)
+    base_X, base_Y, base_w = (None, None, None)
     click_X, click_Y = [], []
     if ridge is not None:
-        base_X, base_Y = load_dwell_features(dataset_root)
+        base_X, base_Y, base_w = load_dwell_features(dataset_root)
     writer = DatasetWriter(dataset_root, (sw, sh))
     recent = deque(maxlen=8)  # (t, obs) buffer for click labeling
 
@@ -134,8 +182,13 @@ def run(camera_index=0, backend="ridge", model_path=None,
     show_thumb = True
     last_xy = (sw / 2, sh / 2)
     flash_until = 0.0
+    ax, bx, ay, by = (1.0, 0.0, 1.0, 0.0)
 
     try:
+        if align:
+            ax, bx, ay, by = _quick_align(win, cap, tracker, predict)
+            print(f"aligned: gain=({ax:.2f},{ay:.2f}) "
+                  f"offset=({bx:.0f},{by:.0f})")
         while True:
             frame = read_mirrored(cap)
             if frame is None:
@@ -150,7 +203,9 @@ def run(camera_index=0, backend="ridge", model_path=None,
             if not frozen:
                 p = predict(obs)
                 if p is not None:
-                    last_xy = smoother.apply(float(p[0]), float(p[1]), now)
+                    px = min(max(ax * float(p[0]) + bx, 0.0), sw - 1.0)
+                    py = min(max(ay * float(p[1]) + by, 0.0), sh - 1.0)
+                    last_xy = smoother.apply(px, py, now)
             ui.draw_gaze_dot(img, *last_xy, frozen=frozen)
 
             # -- click-to-teach ------------------------------------------
@@ -162,11 +217,17 @@ def run(camera_index=0, backend="ridge", model_path=None,
                 feats = np.median([o.features for o in fresh], axis=0)
                 writer.add(fresh[-1], (cx, cy), tag="click")
                 if ridge is not None:
+                    # undo the alignment so the taught label lives in raw
+                    # model space (alignment is applied after predict)
+                    tx = (cx - bx) / ax if ax else cx
+                    ty = (cy - by) / ay if ay else cy
                     click_X.extend([feats] * CLICK_WEIGHT)
-                    click_Y.extend([(cx, cy)] * CLICK_WEIGHT)
+                    click_Y.extend([(tx, ty)] * CLICK_WEIGHT)
                     if base_X is not None:
                         ridge.refit(np.vstack([base_X, click_X]),
-                                    np.vstack([base_Y, click_Y]))
+                                    np.vstack([base_Y, click_Y]),
+                                    np.concatenate([base_w,
+                                                    np.ones(len(click_X))]))
                     else:
                         ridge.refit(np.array(click_X), np.array(click_Y))
                     ridge.bias = np.zeros(2)
@@ -176,7 +237,7 @@ def run(camera_index=0, backend="ridge", model_path=None,
 
             n_clicks = len(click_Y) // CLICK_WEIGHT
             ui.center_text(img,
-                           f"q quit   r recenter   c camera   "
+                           f"q quit   a align   r recenter   c camera   "
                            f"click = teach ({n_clicks} taught)",
                            win.h - 24, 0.55, (110, 110, 110))
             if show_thumb:
@@ -189,6 +250,8 @@ def run(camera_index=0, backend="ridge", model_path=None,
                 show_thumb = not show_thumb
             if key == ord("r"):
                 active.bias = _recenter(win, cap, tracker, predict, active.bias)
+            if key == ord("a"):
+                ax, bx, ay, by = _quick_align(win, cap, tracker, predict)
     finally:
         if ridge is not None and click_Y:
             ridge.save("data/gaze_model.pkl",

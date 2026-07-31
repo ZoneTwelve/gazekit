@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, Dataset
 from torchvision.models import MobileNet_V2_Weights, mobilenet_v2
 
 
@@ -78,25 +78,31 @@ class CropDataset(Dataset):
 
 
 def train(dataset_root="data/dataset", out="data/gaze_cnn.pt",
-          epochs=30, batch_size=64, lr=3e-4):
+          epochs=40, batch_size=64, lr=3e-4, patience=6):
     from .dataset import load_sessions
-    samples = list(load_sessions(dataset_root))
-    if len(samples) < 300:
+    tagged = list(load_sessions(dataset_root, with_session=True))
+    if len(tagged) < 300:
         raise SystemExit(
-            f"Only {len(samples)} samples in {dataset_root}. Run "
+            f"Only {len(tagged)} samples in {dataset_root}. Run "
             "`python -m gazekit calibrate` a couple more times first "
             "(each session adds ~1000).")
 
-    n_val = max(int(0.15 * len(samples)), 50)
-    train_ds, val_ds = random_split(
-        CropDataset(samples, True), [len(samples) - n_val, n_val],
-        generator=torch.Generator().manual_seed(0))
-    # validation must not use train-time augmentation
-    val_ds.dataset = CropDataset(samples, False)
+    # honest split: hold out the NEWEST session (random row splits leak —
+    # neighboring frames are near-duplicates and score optimistically)
+    sessions = sorted({s for s, *_ in tagged})
+    val_sess = sessions[-1] if len(sessions) >= 2 else None
+    train_samples = [rest for s, *rest in tagged if s != val_sess]
+    val_samples = [rest for s, *rest in tagged if s == val_sess]
+    if not val_samples:  # single session: fall back to a random tail
+        cut = max(int(0.85 * len(train_samples)), 1)
+        train_samples, val_samples = train_samples[:cut], train_samples[cut:]
+    train_ds = CropDataset(train_samples, True)
+    val_ds = CropDataset(val_samples, False)
 
     dev = device()
-    print(f"training on {dev} — {len(samples)} samples "
-          f"({len(train_ds)} train / {n_val} val)")
+    print(f"training on {dev} — {len(tagged)} samples "
+          f"({len(train_ds)} train / {len(val_ds)} val, "
+          f"val session: {val_sess or 'tail split'})")
     net = GazeNet().to(dev)
     # freeze early backbone blocks; fine-tune the rest + head
     for p in net.features[:8].parameters():
@@ -109,6 +115,7 @@ def train(dataset_root="data/dataset", out="data/gaze_cnn.pt",
     tl = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     vl = DataLoader(val_ds, batch_size=batch_size)
     best = float("inf")
+    since_best = 0
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     for ep in range(1, epochs + 1):
         net.train()
@@ -130,11 +137,18 @@ def train(dataset_root="data/dataset", out="data/gaze_cnn.pt",
         marker = ""
         if val_err < best:
             best = val_err
+            since_best = 0
             torch.save(net.state_dict(), out)
             marker = "  * saved"
+        else:
+            since_best += 1
         print(f"epoch {ep:2d}/{epochs}  val err {val_err:.4f} "
               f"(~{val_err * 100:.1f}% of screen){marker}")
-    print(f"best model -> {out}  (val err {best * 100:.1f}% of screen)")
+        if since_best >= patience:
+            print(f"early stop: no improvement for {patience} epochs")
+            break
+    print(f"best model -> {out}  (val err {best * 100:.1f}% of screen, "
+          "held-out session)")
 
 
 class CnnPredictor:

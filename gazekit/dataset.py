@@ -63,13 +63,18 @@ def load_pruned(root: str | Path) -> dict[str, set]:
         return {}
 
 
+RECENCY_DECAY = 0.75    # weight multiplier per session of age
+LOW_TRUST_WEIGHT = 0.6  # single-source labels: click / ambient / mouse
+
+
 def load_dwell_features(root: str | Path, last_n: int = 4):
-    """(X, Y) of dwell-quality samples from the newest sessions — the ridge
-    training base for live-mode refits. Pursuit samples are excluded (their
-    labels carry smooth-pursuit lag noise; fine for the CNN, not for ridge)."""
+    """(X, Y, w) of dwell-quality samples from the newest sessions — the
+    ridge training base. w downweights older sessions (drift) and low-trust
+    tags. Pursuit samples are excluded (labels carry smooth-pursuit lag
+    noise; fine for the CNN, not for ridge)."""
     root = Path(root)
     pruned = load_pruned(root)
-    X, Y = [], []
+    X, Y, W = [], [], []
     used = 0
     for sess in sorted(root.glob("session_*"), reverse=True):
         jl = sess / "samples.jsonl"
@@ -84,17 +89,22 @@ def load_dwell_features(root: str | Path, last_n: int = 4):
                 continue
             X.append(rec["features"])
             Y.append(rec["target"])
+            trust = (LOW_TRUST_WEIGHT
+                     if rec["tag"] in ("click", "ambient", "mouse") else 1.0)
+            W.append(trust * RECENCY_DECAY ** used)
         if len(X) > n_before:  # only sessions that contributed count
             used += 1
             if used >= last_n:
                 break
     if not X:
-        return None, None
-    return np.array(X), np.array(Y)
+        return None, None, None
+    return np.array(X), np.array(Y), np.array(W)
 
 
-def load_sessions(root: str | Path):
-    """Yield (right_crop, left_crop, head_feats, target_norm) across all sessions."""
+def load_sessions(root: str | Path, with_session: bool = False):
+    """Yield (right_crop, left_crop, head_feats, target_norm) across all
+    sessions; with_session=True prepends the session name (for honest
+    session-held-out validation splits)."""
     root = Path(root)
     pruned = load_pruned(root)
     for sess in sorted(root.glob("session_*")):
@@ -119,4 +129,7 @@ def load_sessions(root: str | Path):
             head = np.array([rec["yaw"], rec["pitch"], rec["roll"]], dtype=np.float32)
             tgt = np.array([rec["target"][0] / screen[0],
                             rec["target"][1] / screen[1]], dtype=np.float32)
-            yield r, l, head, tgt
+            if with_session:
+                yield sess.name, r, l, head, tgt
+            else:
+                yield r, l, head, tgt

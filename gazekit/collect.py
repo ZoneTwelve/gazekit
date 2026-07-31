@@ -242,10 +242,10 @@ def run(scenario, camera_index=0, dataset_root="data/dataset",
 
         if refit_ridge:
             writer._f.flush()
-            X, Y = load_dwell_features(dataset_root)
+            X, Y, w = load_dwell_features(dataset_root)
             if X is not None:
                 model = GazeModel((sw, sh))
-                cv_err = model.fit(X, Y)
+                cv_err = model.fit(X, Y, sample_weight=w)
                 model.save(model_out, {"refit_from": "collect:" + scenario,
                                        "samples": int(len(X)),
                                        "cv_error_px": round(cv_err, 1)})

@@ -131,6 +131,16 @@ def clean(recs, screen):
     return kept2, pruned, stats
 
 
+def _weights(recs):
+    """Recency + trust sample weights (newer sessions matter more)."""
+    from .dataset import LOW_TRUST_WEIGHT, RECENCY_DECAY
+    sessions = sorted({r["session"] for r in recs})
+    age = {s: len(sessions) - 1 - i for i, s in enumerate(sessions)}
+    return np.array([
+        (LOW_TRUST_WEIGHT if r["tag"] in LOW_TRUST_TAGS else 1.0)
+        * RECENCY_DECAY ** age[r["session"]] for r in recs])
+
+
 def evaluate(recs, screen):
     """LOSO + leave-target-out metrics on cleaned records."""
     sessions = sorted({r["session"] for r in recs})
@@ -143,7 +153,8 @@ def evaluate(recs, screen):
             test = [r for r in recs if r["session"] == sess]
             m = GazeModel(tuple(screen))
             m.fit(np.array([r["X"] for r in train]),
-                  np.array([r["Y"] for r in train]))
+                  np.array([r["Y"] for r in train]),
+                  sample_weight=_weights(train))
             loso_clusters.extend(_cluster_err(m, test))
         report["loso_px"] = round(float(np.mean(
             [c["err"] for c in loso_clusters])), 1)
@@ -170,7 +181,8 @@ def evaluate(recs, screen):
     # leave-one-target-out on the pooled data (interpolation quality)
     m = GazeModel(tuple(screen))
     loto = m.fit(np.array([r["X"] for r in recs]),
-                 np.array([r["Y"] for r in recs]))
+                 np.array([r["Y"] for r in recs]),
+                 sample_weight=_weights(recs))
     report["loto_px"] = round(loto, 1)
     return report, m
 
@@ -222,7 +234,8 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
             test = [r for r in kept if r["session"] == newest]
             cand = GazeModel(tuple(screen))
             cand.fit(np.array([r["X"] for r in train]),
-                     np.array([r["Y"] for r in train]))
+                     np.array([r["Y"] for r in train]),
+                     sample_weight=_weights(train))
             cand_err = float(np.mean([c["err"]
                                       for c in _cluster_err(cand, test)]))
             try:

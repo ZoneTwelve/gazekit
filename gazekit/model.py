@@ -49,10 +49,13 @@ class GazeModel:
     def _make(alpha: float):
         return make_pipeline(StandardScaler(), Ridge(alpha=alpha))
 
-    def fit(self, X: np.ndarray, Y: np.ndarray) -> float:
+    def fit(self, X: np.ndarray, Y: np.ndarray,
+            sample_weight: np.ndarray | None = None) -> float:
         """Fit with leave-one-target-out alpha selection. Returns the CV
-        error in pixels (honest, unlike training RMSE)."""
+        error in pixels (honest, unlike training RMSE). sample_weight lets
+        callers downweight stale sessions / low-trust labels."""
         Xt = transform(X)
+        w = np.asarray(sample_weight, dtype=float) if sample_weight is not None else None
         targets = np.unique(Y, axis=0)
         best = (None, np.inf)
         for alpha in ALPHAS:
@@ -62,7 +65,8 @@ class GazeModel:
                 if m.all() or not m.any():
                     continue
                 pipe = self._make(alpha)
-                pipe.fit(Xt[~m], Y[~m])
+                kw = {"ridge__sample_weight": w[~m]} if w is not None else {}
+                pipe.fit(Xt[~m], Y[~m], **kw)
                 pred = np.median(pipe.predict(Xt[m]), axis=0)
                 errs.append(float(np.hypot(*(pred - t))))
             cv = float(np.mean(errs)) if errs else np.inf
@@ -70,13 +74,17 @@ class GazeModel:
                 best = (alpha, cv)
         self.alpha = best[0] if best[0] is not None else 10.0
         self.pipe = self._make(self.alpha)
-        self.pipe.fit(Xt, Y)
+        kw = {"ridge__sample_weight": w} if w is not None else {}
+        self.pipe.fit(Xt, Y, **kw)
         return best[1]
 
-    def refit(self, X: np.ndarray, Y: np.ndarray):
+    def refit(self, X: np.ndarray, Y: np.ndarray,
+              sample_weight: np.ndarray | None = None):
         """Fast refit reusing the already-selected alpha (for live updates)."""
         self.pipe = self._make(self.alpha if self.alpha is not None else 10.0)
-        self.pipe.fit(transform(X), Y)
+        kw = ({"ridge__sample_weight": np.asarray(sample_weight, dtype=float)}
+              if sample_weight is not None else {})
+        self.pipe.fit(transform(X), Y, **kw)
 
     def predict(self, feats: np.ndarray) -> np.ndarray:
         out = self.pipe.predict(transform(feats))[0] + self.bias
