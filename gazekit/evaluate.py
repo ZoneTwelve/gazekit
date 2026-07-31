@@ -54,6 +54,50 @@ def load_records(root: str | Path):
     return recs, screen
 
 
+ALIGN_ANCHORS = ((0.5, 0.5), (0.22, 0.25), (0.78, 0.75))
+
+
+def _fit(model, recs):
+    """Calibration-aware fit on a record list (sessions known here)."""
+    return model.fit_calaware(
+        np.array([r["X"] for r in recs]),
+        np.array([r["Y"] for r in recs]),
+        [r["session"] for r in recs],
+        sample_weight=_weights(recs))
+
+
+def _aligned_err(model, recs, sw, sh):
+    """Session error under the live protocol: per-axis affine fit on the 3
+    targets nearest the quick-align anchors, error on the rest."""
+    meds = {}
+    clusters = {}
+    for r in recs:
+        clusters.setdefault(tuple(r["Y"]), []).append(r)
+    for t, cl in clusters.items():
+        meds[t] = np.median([model.predict(r["X"]) for r in cl], axis=0)
+    keys = list(meds)
+    anchors = list(dict.fromkeys(
+        min(keys, key=lambda t: (t[0] - fx * sw) ** 2 + (t[1] - fy * sh) ** 2)
+        for fx, fy in ALIGN_ANCHORS))
+    P = np.array([meds[t] for t in anchors])
+    T = np.array(anchors, dtype=float)
+    coef = []
+    for ax in (0, 1):
+        var = P[:, ax].var()
+        if len(anchors) >= 2 and var > 1e-6:
+            a = float(np.clip(np.cov(P[:, ax], T[:, ax], bias=True)[0, 1]
+                              / var, 0.5, 1.8))
+        else:
+            a = 1.0
+        coef.append((a, float(T[:, ax].mean() - a * P[:, ax].mean())))
+    rest = [t for t in keys if t not in anchors]
+    if not rest:
+        return None
+    return float(np.mean([np.hypot(coef[0][0] * meds[t][0] + coef[0][1] - t[0],
+                                   coef[1][0] * meds[t][1] + coef[1][1] - t[1])
+                          for t in rest]))
+
+
 def _cluster_err(model, recs):
     """Median-prediction error per (session, target) cluster."""
     out = []
@@ -160,16 +204,19 @@ def evaluate(recs, screen):
     sessions = sorted({r["session"] for r in recs})
     report = {"sessions": len(sessions), "samples": len(recs)}
 
-    loso_clusters = []
+    loso_clusters, aligned = [], []
     if len(sessions) >= 2:
         for sess in sessions:
             train = [r for r in recs if r["session"] != sess]
             test = [r for r in recs if r["session"] == sess]
             m = GazeModel(tuple(screen))
-            m.fit(np.array([r["X"] for r in train]),
-                  np.array([r["Y"] for r in train]),
-                  sample_weight=_weights(train))
+            _fit(m, train)
             loso_clusters.extend(_cluster_err(m, test))
+            a = _aligned_err(m, test, *screen)
+            if a is not None:
+                aligned.append(a)
+        if aligned:
+            report["loso_aligned_px"] = round(float(np.mean(aligned)), 1)
         errs = np.array([c["err"] for c in loso_clusters])
         report["loso_px"] = round(float(errs.mean()), 1)
         report["loso_rmse_px"] = round(float(np.sqrt((errs ** 2).mean())), 1)
@@ -225,11 +272,9 @@ def evaluate(recs, screen):
                  for t in sorted({r["tag"] for r in recs})},
     }
 
-    # leave-one-target-out on the pooled data (interpolation quality)
+    # calibration-aware fit on all data (deployed candidate)
     m = GazeModel(tuple(screen))
-    loto = m.fit(np.array([r["X"] for r in recs]),
-                 np.array([r["Y"] for r in recs]),
-                 sample_weight=_weights(recs))
+    loto = _fit(m, recs)
     report["loto_px"] = round(loto, 1)
     return report, m
 
@@ -258,6 +303,9 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
     print(f"\nvalidate/evaluate ({report['samples']} samples, "
           f"{report['sessions']} sessions):")
     if "loso_px" in report:
+        if "loso_aligned_px" in report:
+            print(f"  cross-session ALIGNED (live protocol): "
+                  f"{report['loso_aligned_px']}px")
         print(f"  cross-session (LOSO): {report['loso_px']}px  "
               f"(x {report['loso_x_px']} / y {report['loso_y_px']})  "
               f"p50/p90/p95: {report['loso_p50_px']}/"
@@ -295,25 +343,27 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
     updated = False
     if do_update:
         sessions = sorted({r["session"] for r in kept})
-        if len(sessions) >= 2:
-            newest = sessions[-1]
+        # gate needs a session with enough distinct targets to align + test
+        big = [s for s in sessions
+               if len({tuple(r["Y"]) for r in kept if r["session"] == s}) >= 6]
+        if len(sessions) >= 2 and big:
+            newest = big[-1]
             train = [r for r in kept if r["session"] != newest]
             test = [r for r in kept if r["session"] == newest]
             cand = GazeModel(tuple(screen))
-            cand.fit(np.array([r["X"] for r in train]),
-                     np.array([r["Y"] for r in train]),
-                     sample_weight=_weights(train))
-            cand_err = float(np.mean([c["err"]
-                                      for c in _cluster_err(cand, test)]))
+            _fit(cand, train)
+            # gate on the ALIGNED protocol — live always quick-aligns, so
+            # raw offset differences shouldn't decide deployment
+            cand_err = _aligned_err(cand, test, *screen) or float("inf")
             try:
                 deployed = GazeModel.load(model_out)
-                depl_err = float(np.mean([c["err"] for c in
-                                          _cluster_err(deployed, test)]))
+                depl_err = (_aligned_err(deployed, test, *screen)
+                            or float("inf"))
             except Exception:
                 # includes feature-dimension mismatch after a transform
                 # upgrade — the old pickle can't score the new features
                 depl_err = float("inf")
-            print(f"\nupdate gate on newest session ({newest}): "
+            print(f"\nupdate gate on newest session ({newest}, aligned): "
                   f"candidate {cand_err:.0f}px vs deployed {depl_err:.0f}px")
             if cand_err <= depl_err * 1.05:
                 candidate.save(model_out, {"refit_from": "iterate", **report})

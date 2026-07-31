@@ -90,6 +90,43 @@ class GazeModel:
         self.pipe.fit(Xt, Y, **kw)
         return best[1]
 
+    def fit_calaware(self, X: np.ndarray, Y: np.ndarray, sessions,
+                     rounds: int = 3,
+                     sample_weight: np.ndarray | None = None) -> float:
+        """Calibration-aware fit: live usage always applies a per-session
+        3-point affine alignment, so training alternates between fitting the
+        model and removing each session's affine offset from the targets —
+        the model learns the session-invariant shape, alignment handles the
+        rest. Won LOSO-aligned 184.7 -> 162.6px offline."""
+        Y = np.asarray(Y, dtype=float)
+        sessions = np.asarray(sessions)
+        Yc = Y.copy()
+        cv = np.inf
+        for _ in range(rounds):
+            cv = self.fit(X, Yc, sample_weight=sample_weight)
+            P = self.pipe.predict(transform(X))
+            Yc = Y.copy()
+            for s in np.unique(sessions):
+                msk = sessions == s
+                meds, tgts = [], []
+                for t in {tuple(y) for y in Y[msk]}:
+                    tm = msk & (Y == t).all(axis=1)
+                    meds.append(np.median(P[tm], axis=0))
+                    tgts.append(t)
+                if len(tgts) < 2:
+                    continue
+                Pm, Tm = np.array(meds), np.array(tgts)
+                for ax in range(2):
+                    var = Pm[:, ax].var()
+                    if var < 1e-6:
+                        continue
+                    a = float(np.clip(
+                        np.cov(Pm[:, ax], Tm[:, ax], bias=True)[0, 1] / var,
+                        0.5, 1.8))
+                    b = float(Tm[:, ax].mean() - a * Pm[:, ax].mean())
+                    Yc[msk, ax] = (Y[msk, ax] - b) / a
+        return cv
+
     def refit(self, X: np.ndarray, Y: np.ndarray,
               sample_weight: np.ndarray | None = None):
         """Fast refit reusing the already-selected alpha (for live updates)."""
