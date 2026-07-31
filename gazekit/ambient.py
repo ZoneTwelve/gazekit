@@ -157,6 +157,79 @@ def overlay_test():
           "fullscreen app).")
 
 
+class TargetPolicy:
+    """UCB bandit over a 4x4 screen grid: each popup is an arm pull, and the
+    reward signal is the measured prediction error there. The policy sends
+    popups where they earn the most — high recent error, under-sampled, or
+    stale cells — instead of uniformly at random. State persists across runs
+    (data/ambient_policy.json) so it keeps learning.
+
+    This is the honest place for RL in a gaze tracker: the regression itself
+    has labels (supervised beats RL there); the *sampling policy* doesn't.
+    """
+    GRID = 4
+    C = 0.55          # exploration strength
+    EPS = 0.2         # uniform-exploration floor: never tunnel-vision
+    EWMA = 0.35       # how fast cell error estimates track new evidence
+    STALE_H = 2.0     # hours for the staleness bonus to saturate
+
+    def __init__(self, sw, sh, path="data/ambient_policy.json"):
+        self.sw, self.sh = sw, sh
+        self.diag = float(np.hypot(sw, sh))
+        self.path = Path(path)
+        g = self.GRID
+        self.n = np.ones((g, g))
+        self.err = np.full((g, g), 0.10)   # prior: ~10% of diagonal
+        self.last = np.zeros((g, g))
+        try:
+            s = json.loads(self.path.read_text())
+            self.n = np.array(s["n"])
+            self.err = np.array(s["err"])
+            self.last = np.array(s["last"])
+        except (FileNotFoundError, KeyError, ValueError):
+            pass
+
+    def _cell(self, x, y):
+        g = self.GRID
+        return (min(int(y / self.sh * g), g - 1),
+                min(int(x / self.sw * g), g - 1))
+
+    def choose(self, rng):
+        if rng.random() < self.EPS:
+            return rng.randrange(self.GRID), rng.randrange(self.GRID)
+        stale = np.clip((time.time() - self.last) / (self.STALE_H * 3600),
+                        0.0, 1.0) * 0.05
+        ucb = self.err + self.C * np.sqrt(
+            np.log(self.n.sum() + 1.0) / self.n) * 0.05 + stale
+        ucb = ucb + np.random.uniform(0, 1e-4, ucb.shape)  # tie-break
+        gy, gx = np.unravel_index(np.argmax(ucb), ucb.shape)
+        return int(gy), int(gx)
+
+    def point_in(self, cell, rng):
+        gy, gx = cell
+        g = self.GRID
+        x = (gx + rng.uniform(0.2, 0.8)) / g * self.sw
+        y = (gy + rng.uniform(0.2, 0.8)) / g * self.sh
+        return (float(np.clip(x, 20, self.sw - 20)),
+                float(np.clip(y, 20, self.sh - 20)))
+
+    def update(self, x, y, err_px):
+        gy, gx = self._cell(x, y)
+        e = min(err_px / self.diag, 0.5)
+        self.err[gy, gx] = (1 - self.EWMA) * self.err[gy, gx] + self.EWMA * e
+        self.n[gy, gx] += 1
+        self.last[gy, gx] = time.time()
+        self.path.write_text(json.dumps({
+            "n": self.n.tolist(), "err": np.round(self.err, 4).tolist(),
+            "last": self.last.tolist()}))
+
+    def summary(self):
+        worst = np.unravel_index(np.argmax(self.err), self.err.shape)
+        return (f"policy: worst cell row{worst[0]} col{worst[1]} "
+                f"~{self.err[worst] * self.diag:.0f}px, "
+                f"{int(self.n.sum())} pulls")
+
+
 def _history_points(dataset_root, limit=40):
     _, Y, _ = load_dwell_features(dataset_root)
     if Y is None:
@@ -232,6 +305,8 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
     base_X, base_Y, base_w = load_dwell_features(dataset_root)
     new_X, new_Y = [], []
     history = _history_points(dataset_root)
+    policy = TargetPolicy(sw, sh)
+    print(policy.summary())
     suspect_queue = []   # regions where a triage confirmed model error
     val_errors = []
     accepted = tested = 0
@@ -275,15 +350,18 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
                 print("          welcome back")
 
             is_val = bool(history) and rng.random() < VALIDATE_P
+            cell = policy.choose(rng)
             if suspect_queue and not is_val:
                 bx, by = suspect_queue.pop(0)  # revisit confirmed-bad regions
                 target = (float(np.clip(bx + rng.uniform(-80, 80), 20, sw - 20)),
                           float(np.clip(by + rng.uniform(-80, 80), 20, sh - 20)))
             elif is_val:
-                target = rng.choice(history)
+                # validate the bandit-chosen region using a known old point
+                cx, cy = policy.point_in(cell, rng)
+                target = min(history,
+                             key=lambda p: (p[0] - cx) ** 2 + (p[1] - cy) ** 2)
             else:
-                target = (rng.uniform(0.05, 0.95) * sw,
-                          rng.uniform(0.06, 0.94) * sh)
+                target = policy.point_in(cell, rng)
 
             outcome, err, feats, kept = _popup(dot, cap, tracker, model,
                                                target, voice)
@@ -305,6 +383,7 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
                 if o2 == "looked" and e2 <= ATTENTION_RADIUS:
                     # you clearly engaged the recheck -> first miss was model
                     suspect_queue.append(target)
+                    policy.update(*target, err)  # big error boosts that cell
                     log("triage", result="model-suspect",
                         target=[round(target[0]), round(target[1])],
                         error_px=round(err, 1), recheck_px=round(e2, 1))
@@ -318,6 +397,7 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
                 continue
             backoff = 1.0
 
+            policy.update(*target, err)
             if is_val:
                 tested += 1
                 val_errors.append(err)
