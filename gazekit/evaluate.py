@@ -65,7 +65,8 @@ def _cluster_err(model, recs):
         out.append({"session": sess, "target": np.array(tgt),
                     "tag": rs[0]["tag"], "n": len(rs),
                     "err": float(np.hypot(*(pred - tgt))),
-                    "err_xy": np.abs(pred - np.array(tgt))})
+                    "err_xy": np.abs(pred - np.array(tgt)),
+                    "signed": pred - np.array(tgt)})
     return out
 
 
@@ -171,9 +172,17 @@ def evaluate(recs, screen):
             loso_clusters.extend(_cluster_err(m, test))
         errs = np.array([c["err"] for c in loso_clusters])
         report["loso_px"] = round(float(errs.mean()), 1)
+        report["loso_rmse_px"] = round(float(np.sqrt((errs ** 2).mean())), 1)
         report["loso_p50_px"] = round(float(np.percentile(errs, 50)), 1)
         report["loso_p90_px"] = round(float(np.percentile(errs, 90)), 1)
         report["loso_p95_px"] = round(float(np.percentile(errs, 95)), 1)
+        report["loso_max_px"] = round(float(errs.max()), 1)
+        # bias-variance split: how much of the error is a fixable offset?
+        signed = np.array([c["signed"] for c in loso_clusters])
+        report["bias_xy_px"] = [round(float(signed[:, 0].mean()), 1),
+                                round(float(signed[:, 1].mean()), 1)]
+        report["residual_sd_xy_px"] = [round(float(signed[:, 0].std()), 1),
+                                       round(float(signed[:, 1].std()), 1)]
         report["loso_x_px"] = round(float(np.mean(
             [c["err_xy"][0] for c in loso_clusters])), 1)
         report["loso_y_px"] = round(float(np.mean(
@@ -253,6 +262,11 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
               f"(x {report['loso_x_px']} / y {report['loso_y_px']})  "
               f"p50/p90/p95: {report['loso_p50_px']}/"
               f"{report['loso_p90_px']}/{report['loso_p95_px']}")
+        bx, by = report["bias_xy_px"]
+        sx, sy = report["residual_sd_xy_px"]
+        print(f"  bias/variance: signed bias ({bx:+.0f},{by:+.0f})px, "
+              f"residual SD ({sx:.0f},{sy:.0f})px "
+              f"{'-> mostly offset-correctable' if abs(by) > sy * 0.5 else ''}")
         print(f"  per tag: " + "  ".join(
             f"{t}={e}px" for t, e in report["per_tag_px"].items()))
         print("  region map (px):")

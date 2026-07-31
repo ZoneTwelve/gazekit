@@ -62,18 +62,39 @@ class CropDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
+    _clahe = None
+
+    @classmethod
+    def _eq(cls, img):
+        # CLAHE over global hist-eq: local equalization handles the
+        # directional shadows MPIIGaze names as a top error source, without
+        # blowing out the iris. Applied at load time — stored crops stay raw.
+        import cv2
+        if cls._clahe is None:
+            cls._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(4, 4))
+        return cls._clahe.apply(img)
+
     def __getitem__(self, i):
         r, l, head, tgt = self.samples[i]
-        # MPIIGaze: illumination ~35% of cross-domain error; hist-eq at load
-        # time keeps stored crops raw and old sessions compatible
-        import cv2
-        r = cv2.equalizeHist(r).astype(np.float32) / 255.0
-        l = cv2.equalizeHist(l).astype(np.float32) / 255.0
-        if self.train:  # light photometric jitter for lighting robustness
-            gain = np.random.uniform(0.85, 1.15)
-            bias = np.random.uniform(-0.08, 0.08)
-            r = np.clip(r * gain + bias, 0, 1)
-            l = np.clip(l * gain + bias, 0, 1)
+        r = self._eq(r).astype(np.float32) / 255.0
+        l = self._eq(l).astype(np.float32) / 255.0
+        if self.train:
+            # strong photometric jitter: gain, bias, gamma — the model must
+            # not key on the room's lighting
+            gain = np.random.uniform(0.8, 1.2)
+            bias = np.random.uniform(-0.1, 0.1)
+            gamma = np.random.uniform(0.7, 1.4)
+            r = np.clip((r * gain + bias), 0, 1) ** gamma
+            l = np.clip((l * gain + bias), 0, 1) ** gamma
+            # random erasing: occlude a patch so no single texture region
+            # (brow, skin, glasses edge) becomes load-bearing
+            for img in (r, l):
+                if np.random.random() < 0.3:
+                    eh = np.random.randint(6, 16)
+                    ew = np.random.randint(8, 22)
+                    y0 = np.random.randint(0, img.shape[0] - eh)
+                    x0 = np.random.randint(0, img.shape[1] - ew)
+                    img[y0:y0 + eh, x0:x0 + ew] = img.mean()
         return (torch.from_numpy(r).unsqueeze(0),
                 torch.from_numpy(l).unsqueeze(0),
                 torch.from_numpy(head / 30.0),
@@ -168,12 +189,11 @@ class CnnPredictor:
     def predict(self, obs) -> np.ndarray | None:
         if obs.eye_crops is None:
             return None
-        import cv2
         r, l = obs.eye_crops
         rt = torch.from_numpy(
-            cv2.equalizeHist(r).astype(np.float32) / 255.0)[None, None]
+            CropDataset._eq(r).astype(np.float32) / 255.0)[None, None]
         lt = torch.from_numpy(
-            cv2.equalizeHist(l).astype(np.float32) / 255.0)[None, None]
+            CropDataset._eq(l).astype(np.float32) / 255.0)[None, None]
         hd = torch.tensor([[obs.yaw, obs.pitch, obs.roll]],
                           dtype=torch.float32) / 30.0
         with torch.no_grad():
