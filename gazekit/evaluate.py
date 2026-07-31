@@ -388,6 +388,20 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
     except Exception as e:
         print(f"  (eyeball eval skipped: {e})")
 
+    # VLM environment annotation: run automatically whenever collection
+    # sessions have produced snapshots that aren't annotated yet
+    try:
+        from .annotate import CONTEXT_DIR, OUT, run as annotate_run
+        snaps = {p.stem for p in CONTEXT_DIR.glob("session_*.jpg")}
+        done = ({json.loads(l)["session"] for l in open(OUT)}
+                if OUT.exists() else set())
+        if snaps - done:
+            print(f"\nannotating {len(snaps - done)} new context "
+                  "snapshot(s) with Florence-2...")
+            annotate_run()
+    except Exception as e:
+        print(f"  (annotation skipped: {e})")
+
     entry = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), **report,
              "pruned": sum(len(v) for v in load_pruned(root).values()),
              "updated": updated}
