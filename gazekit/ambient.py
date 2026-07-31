@@ -32,44 +32,62 @@ from .dataset import DatasetWriter, load_dwell_features
 from .model import GazeModel
 from .tracker import FaceTracker
 
-DOT = 72                 # overlay window size, points
-DWELL_S = 1.4            # sampling time after the settle animation
-SETTLE_S = 0.5
+DOT = 72                 # dot size, points
+DWELL_S = 1.4            # sampling time once the eye has settled
+REACT_S = 0.4            # full-screen ring holds: human reaction time
+SHRINK_S = 1.0           # ring contracts onto the target
+FIX_S = 0.35             # fixation settle before sampling starts
 VALIDATE_P = 0.4         # fraction of popups that re-test old points
 ATTENTION_RADIUS = 300.0 # median gaze must land this close, else discarded
 REFIT_EVERY = 5          # accepted explore points between ridge refits
 DEGRADE_PX = 260.0       # rolling validation error that triggers a warning
 
 
-class _DotView(NSView):
+class _OverlayView(NSView):
+    """Full-screen view: a huge ring that contracts onto the target point,
+    dragging the user's gaze with it (phase 0 = covers screen, 1 = dot)."""
+    tx = 0.0
+    ty = 0.0   # bottom-left-origin view coordinates
     phase = 1.0
 
     def drawRect_(self, rect):
-        NSColor.clearColor().set()
-        c = DOT / 2.0
-        r_out = 26 - 16 * min(self.phase, 1.0)
+        import math
+        b = self.bounds().size
+        p = min(max(self.phase, 0.0), 1.0)
+        ease = 1.0 - (1.0 - p) ** 3
+        # faint veil that fades as the ring contracts
+        if p < 1.0:
+            NSColor.colorWithSRGBRed_green_blue_alpha_(
+                0.0, 0.0, 0.0, 0.22 * (1.0 - p)).set()
+            NSBezierPath.fillRect_(self.bounds())
+        r0 = max(math.hypot(self.tx - cx, self.ty - cy)
+                 for cx in (0.0, b.width) for cy in (0.0, b.height)) + 30.0
+        r = r0 * (1.0 - ease) + 15.0 * ease
         NSColor.colorWithSRGBRed_green_blue_alpha_(1.0, 0.62, 0.1, 0.95).set()
         ring = NSBezierPath.bezierPathWithOvalInRect_(
-            NSMakeRect(c - r_out, c - r_out, 2 * r_out, 2 * r_out))
-        ring.setLineWidth_(3.0)
+            NSMakeRect(self.tx - r, self.ty - r, 2 * r, 2 * r))
+        ring.setLineWidth_(3.0 + 5.0 * (1.0 - p))
         ring.stroke()
         NSColor.whiteColor().set()
         NSBezierPath.bezierPathWithOvalInRect_(
-            NSMakeRect(c - 4, c - 4, 8, 8)).fill()
+            NSMakeRect(self.tx - 4, self.ty - 4, 8, 8)).fill()
 
 
 class OverlayDot:
-    """Borderless, transparent, click-through, always-on-top dot window."""
+    """Borderless, transparent, click-through, always-on-top full-screen
+    overlay. The show() animation starts screen-sized and shrinks to the
+    target so the dot cannot be missed."""
 
     def __init__(self):
         app = NSApplication.sharedApplication()
         app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
         app.finishLaunching()  # windows may never display without this
-        self.screen_h = NSScreen.mainScreen().frame().size.height
+        frame = NSScreen.mainScreen().frame()
+        self.screen_h = frame.size.height
         self.win = NSWindow.alloc(
         ).initWithContentRect_styleMask_backing_defer_(
-            NSMakeRect(0, 0, DOT, DOT), NSWindowStyleMaskBorderless,
-            NSBackingStoreBuffered, False)
+            NSMakeRect(0, 0, frame.size.width, frame.size.height),
+            NSWindowStyleMaskBorderless, NSBackingStoreBuffered, False)
         self.win.setReleasedWhenClosed_(False)
         self.win.setOpaque_(False)
         self.win.setBackgroundColor_(NSColor.clearColor())
@@ -80,13 +98,16 @@ class OverlayDot:
         self.win.setCollectionBehavior_(
             (1 << 0)      # NSWindowCollectionBehaviorCanJoinAllSpaces
             | (1 << 8))   # NSWindowCollectionBehaviorFullScreenAuxiliary
-        self.view = _DotView.alloc().initWithFrame_(NSMakeRect(0, 0, DOT, DOT))
+        self.view = _OverlayView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, frame.size.width, frame.size.height))
         self.win.setContentView_(self.view)
 
     def show(self, x: float, y: float, phase: float):
-        """x, y in top-left-origin screen points (our gaze coordinates)."""
+        """x, y in top-left-origin screen points (our gaze coordinates).
+        phase 0 -> ring covers the screen; 1 -> small dot at (x, y)."""
+        self.view.tx = float(x)
+        self.view.ty = float(self.screen_h - y)
         self.view.phase = phase
-        self.win.setFrameOrigin_((x - DOT / 2, self.screen_h - y - DOT / 2))
         self.view.setNeedsDisplay_(True)
         self.win.orderFrontRegardless()
         self.win.displayIfNeeded()
@@ -111,26 +132,29 @@ def _notify(title, text):
         pass
 
 
-def overlay_test(seconds=6.0):
-    """Visibility check: sweep the dot around the screen for a few seconds.
-    Run `gazekit ambient --test` and watch for an orange dot."""
-    import math
+def overlay_test():
+    """Visibility check: three popups with the full guide animation.
+    Run `gazekit ambient --test` and follow the shrinking rings."""
+    import random as _r
     from .screen import screen_size
     from .ui import say
     sw, sh = screen_size()
     dot = OverlayDot()
-    say("watch for the dot")
-    t0 = time.monotonic()
-    while time.monotonic() - t0 < seconds:
-        t = time.monotonic() - t0
-        x = sw * (0.5 + 0.4 * math.cos(2 * math.pi * t / 3.0))
-        y = sh * (0.5 + 0.35 * math.sin(2 * math.pi * t / 3.0))
-        dot.show(x, y, 1.0)
-        time.sleep(0.02)
-    dot.hide()
-    print("test done — the dot should have circled the screen for "
-          f"{seconds:.0f}s. If you saw nothing, tell me your monitor setup "
-          "(built-in / external / fullscreen app).")
+    for i in range(3):
+        target = (_r.uniform(0.1, 0.9) * sw, _r.uniform(0.1, 0.9) * sh)
+        say("look")
+        t0 = time.monotonic()
+        total = REACT_S + SHRINK_S + FIX_S + DWELL_S
+        while time.monotonic() - t0 < total:
+            t = time.monotonic() - t0
+            phase = min(max((t - REACT_S) / SHRINK_S, 0.0), 1.0)
+            dot.show(*target, phase)
+            time.sleep(0.016)
+        dot.hide()
+        time.sleep(0.8)
+    print("test done — you should have seen 3 rings shrink onto dots. "
+          "If not, tell me your monitor setup (built-in / external / "
+          "fullscreen app).")
 
 
 def _history_points(dataset_root, limit=40):
@@ -184,10 +208,14 @@ def run(camera_index=0, model_path="data/gaze_model.pkl",
             if voice:
                 from .ui import say
                 say("look")
-            # settle animation, frames discarded (longer: hear cue + saccade)
+            # guide animation, frames discarded: hold (reaction time) ->
+            # shrink (gaze rides the ring down) -> fixation settle
+            total = REACT_S + SHRINK_S + FIX_S
             t0 = time.monotonic()
-            while time.monotonic() - t0 < SETTLE_S + 0.4:
-                dot.show(*target, (time.monotonic() - t0) / SETTLE_S)
+            while time.monotonic() - t0 < total:
+                t = time.monotonic() - t0
+                phase = min(max((t - REACT_S) / SHRINK_S, 0.0), 1.0)
+                dot.show(*target, phase)
                 frame = read_mirrored(cap)
                 if frame is not None:
                     tracker.process(frame)
