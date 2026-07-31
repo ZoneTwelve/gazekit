@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .env
+
+# research (private repo, personal-data analysis)
+research/

@@ -232,6 +232,22 @@ def run(scenario, camera_index=0, dataset_root="data/dataset",
         elif scenario == "blinks":
             _blinks(win, cap, tracker, writer)
 
+        elif scenario == "daily":
+            # standardized ~2min daily probe: run 2-3x per day under
+            # DIFFERENT lighting (morning/evening/lamp). Fills the two
+            # measured dataset gaps: illumination coverage (brightness was
+            # never logged before 2026-08-01) and cross-day variation.
+            info_screen(win, ["Daily probe (~2 min).",
+                              "Run this 2-3x per day in different lighting.",
+                              "Grid, then edges, then two head-movement dots."])
+            collect_points(win, cap, tracker, grid_points(sw, sh, 9),
+                           writer, tag="calib", label_prefix="grid ")
+            edge = _edge_points(sw, sh)[::2]
+            collect_points(win, cap, tracker, edge, writer,
+                           tag="edges", label_prefix="edges ")
+            for fx, fy in ((0.3, 0.5), (0.7, 0.5)):
+                _vor_point(win, cap, tracker, writer, (fx * sw, fy * sh))
+
         elif scenario == "posture":
             for name, instruction in POSTURES:
                 info_screen(win, [f"Posture: {name}", instruction,

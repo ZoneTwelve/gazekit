@@ -64,7 +64,9 @@ def load_pruned(root: str | Path) -> dict[str, set]:
         return {}
 
 
-RECENCY_DECAY = 0.75    # weight multiplier per session of age
+RECENCY_DECAY = 1.0     # sweep verdict: with session auto-alignment doing
+                        # the drift correction, recency decay only hurts
+                        # (val aligned: decay 1.0 = 205px, 0.75 = 223px)
 LOW_TRUST_WEIGHT = 0.6  # single-source labels: click / ambient / mouse
 
 

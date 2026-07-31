@@ -23,19 +23,31 @@ ALPHAS = (0.3, 1.0, 3.0, 10.0, 30.0, 100.0)
 
 
 def transform(X: np.ndarray) -> np.ndarray:
-    """Raw 14-dim tracker features -> 11-dim gaze features.
+    """Raw 14-dim tracker features -> 19-dim gaze features ("v5-combo").
 
-    Binocular mean averages out per-eye landmark noise; vergence keeps the
-    horizontal/depth information the mean discards; openness carries most of
-    the vertical signal; pose+translation let the model compensate posture
-    drift between sessions of sitting.
+    Base: binocular mean (averages per-eye noise), vergence, openness,
+    head pose, translation, eyelid position. Added terms — each earned its
+    place in a 13-session LOSO sweep (aligned 181px -> 169px):
+      bino*tz          gaze gain scales with camera distance
+      bino_y*pitch,
+      bino_x*yaw,
+      opn*pitch        head-pose interactions the linear terms miss
+      bino**2          screen-mapping curvature
     """
     X = np.atleast_2d(X)
     R, L = X[:, 0:4], X[:, 4:8]
     bino = (R[:, :2] + L[:, :2]) / 2
     verg = R[:, :2] - L[:, :2]
     opn = (R[:, 3:4] + L[:, 3:4]) / 2
-    return np.hstack([bino, verg, opn, X[:, 8:11], X[:, 11:14]])
+    lid = (R[:, 2:3] + L[:, 2:3]) / 2
+    pose = X[:, 8:11]
+    trans = X[:, 11:14]
+    tz = trans[:, 2:3]
+    inter = np.hstack([bino[:, 1:2] * pose[:, 1:2],
+                       bino[:, 0:1] * pose[:, 0:1],
+                       opn * pose[:, 1:2],
+                       bino * tz])
+    return np.hstack([bino, verg, opn, pose, trans, lid, inter, bino ** 2])
 
 
 class GazeModel:

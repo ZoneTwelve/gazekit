@@ -54,6 +54,8 @@ click refits the model instantly), `r` = 1-point drift recenter,
 $PY -m gazekit collect posture    # same grid at 3 sitting positions
                                   #   -> fixes "I moved and it broke"
 $PY -m gazekit collect edges      # corners/edges the normal grid misses
+$PY -m gazekit collect daily      # ~2 min daily probe: run 2-3x per day
+                                  #   in different lighting
 $PY -m gazekit collect vor        # eyes locked on a fixed dot while you
                                   #   move your head -> head-pose robustness
 $PY -m gazekit collect blinks     # open/closed-eye calibration -> tunes

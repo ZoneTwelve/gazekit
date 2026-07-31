@@ -310,6 +310,8 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
                 depl_err = float(np.mean([c["err"] for c in
                                           _cluster_err(deployed, test)]))
             except Exception:
+                # includes feature-dimension mismatch after a transform
+                # upgrade — the old pickle can't score the new features
                 depl_err = float("inf")
             print(f"\nupdate gate on newest session ({newest}): "
                   f"candidate {cand_err:.0f}px vs deployed {depl_err:.0f}px")

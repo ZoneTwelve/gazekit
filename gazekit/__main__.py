@@ -35,7 +35,8 @@ def main():
 
     co = sub.add_parser("collect", help="extra training-data scenarios")
     co.add_argument("scenario",
-                    choices=("pursuit", "edges", "posture", "vor", "blinks"))
+                    choices=("pursuit", "edges", "posture", "vor", "blinks",
+                             "daily"))
     co.add_argument("--camera", type=int, default=0)
 
     l = sub.add_parser("live", help="show the live gaze dot")
