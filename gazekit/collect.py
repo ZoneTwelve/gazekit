@@ -136,7 +136,9 @@ def _blinks(win, cap, tracker, writer):
     profile = {
         "open_blink": round(ob, 3), "closed_blink": round(cb, 3),
         "open_openness": round(oo, 3), "closed_openness": round(co, 3),
-        "blink_on": round(ob + 0.55 * (cb - ob), 3),
+        # 0.45 interpolation: offline sweep vs labeled closed/open frames
+        # showed the lower threshold gains recall at zero precision cost
+        "blink_on": round(ob + 0.45 * (cb - ob), 3),
         "blink_off": round(ob + 0.30 * (cb - ob), 3),
         "open_min": round(co + 0.40 * (oo - co), 3),
     }

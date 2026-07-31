@@ -136,6 +136,7 @@ class FaceTracker:
             m = np.array(res.facial_transformation_matrixes[0])
             yaw, pitch, roll = _rotation_to_euler(m[:3, :3])
             tvec = m[:3, 3]
+            obs.extras["tmatrix"] = m
         obs.yaw, obs.pitch, obs.roll = yaw, pitch, roll
 
         r_feat, _ = _eye_frame_features(pts, R_CORNERS, R_LIDS, R_IRIS)

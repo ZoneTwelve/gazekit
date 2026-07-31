@@ -16,6 +16,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+# eye-region landmark indices logged raw for future 3D-eyeball fitting:
+# iris rings (468-477), corners (33,133,362,263), lids (159,145,386,374)
+EYE_LM_IDX = list(range(468, 478)) + [33, 133, 362, 263, 159, 145, 386, 374]
+
 
 class DatasetWriter:
     def __init__(self, root: str | Path, screen_size: tuple[int, int]):
@@ -55,6 +59,14 @@ class DatasetWriter:
             "yaw": float(obs.yaw), "pitch": float(obs.pitch),
             "roll": float(obs.roll), "blink": float(obs.blink),
             "brightness": round(float(obs.brightness), 1),
+            "t": round(time.time(), 3),
+            "interocular_px": round(float(obs.interocular_px), 2),
+            # raw eye-region landmarks + head transform: required to fit the
+            # 3D eyeball model later (14-dim features are too reduced)
+            "eye_lm": (np.round(obs.landmarks_px[EYE_LM_IDX], 2).tolist()
+                       if obs.landmarks_px is not None else None),
+            "tmatrix": (np.round(obs.extras["tmatrix"], 5).tolist()
+                        if "tmatrix" in obs.extras else None),
         }) + "\n")
 
     def close(self):
@@ -118,7 +130,8 @@ def load_dwell_features(root: str | Path, last_n: int = 4):
     return np.array(X), np.array(Y), np.array(W)
 
 
-def load_sessions(root: str | Path, with_session: bool = False):
+def load_sessions(root: str | Path, with_session: bool = False,
+                  exclude_tags: tuple = ()):
     """Yield (right_crop, left_crop, head_feats, target_norm) across all
     sessions; with_session=True prepends the session name (for honest
     session-held-out validation splits)."""
@@ -135,8 +148,9 @@ def load_sessions(root: str | Path, with_session: bool = False):
             if rec.get("meta"):
                 screen = rec["screen_size"]
                 continue
-            if rec.get("tag") == "closed" or rec.get("i") in bad:
-                continue  # no valid gaze label / flagged by iterate
+            if (rec.get("tag") == "closed" or rec.get("i") in bad
+                    or rec.get("tag") in exclude_tags):
+                continue  # no valid gaze label / flagged / excluded
             r = cv2.imread(str(sess / "crops" / f"{rec['i']:06d}_R.png"),
                            cv2.IMREAD_GRAYSCALE)
             l = cv2.imread(str(sess / "crops" / f"{rec['i']:06d}_L.png"),

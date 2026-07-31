@@ -151,10 +151,15 @@ def run(camera_index=0, backend="ridge", model_path=None,
         ridge = GazeModel.load("data/gaze_model.pkl" if backend == "hybrid"
                                else (model_path or "data/gaze_model.pkl"))
 
+    # offline ensemble sweep: blend error is U-shaped in alpha with the
+    # minimum at ~0.4 ridge / 0.6 cnn — better than either model alone
+    HYBRID_RIDGE_W = 0.4
+
     def predict(obs):
         if ridge is not None and cnn is not None:
             pr, pc = ridge.predict(obs.features), cnn.predict(obs)
-            return pr if pc is None else (pr + pc) / 2.0
+            return (pr if pc is None
+                    else HYBRID_RIDGE_W * pr + (1 - HYBRID_RIDGE_W) * pc)
         if cnn is not None:
             return cnn.predict(obs)
         return ridge.predict(obs.features)

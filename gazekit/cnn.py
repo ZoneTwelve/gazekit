@@ -102,19 +102,26 @@ class CropDataset(Dataset):
 
 
 def train(dataset_root="data/dataset", out="data/gaze_cnn.pt",
-          epochs=40, batch_size=64, lr=3e-4, patience=6):
+          epochs=40, batch_size=64, lr=3e-4, patience=6, exclude_tags=()):
     from .dataset import load_sessions
-    tagged = list(load_sessions(dataset_root, with_session=True))
+    tagged = list(load_sessions(dataset_root, with_session=True,
+                                exclude_tags=exclude_tags))
     if len(tagged) < 300:
         raise SystemExit(
             f"Only {len(tagged)} samples in {dataset_root}. Run "
             "`python -m gazekit calibrate` a couple more times first "
             "(each session adds ~1000).")
 
-    # honest split: hold out the NEWEST session (random row splits leak —
-    # neighboring frames are near-duplicates and score optimistically)
-    sessions = sorted({s for s, *_ in tagged})
-    val_sess = sessions[-1] if len(sessions) >= 2 else None
+    # honest split: hold out the newest session with enough samples to give
+    # a stable validation signal (random row splits leak — neighboring
+    # frames are near-duplicates and score optimistically; tiny sessions
+    # make early stopping a coin flip)
+    counts = {}
+    for s, *_ in tagged:
+        counts[s] = counts.get(s, 0) + 1
+    big = [s for s in sorted(counts) if counts[s] >= 200]
+    val_sess = big[-1] if big else (sorted(counts)[-1] if len(counts) >= 2
+                                    else None)
     train_samples = [rest for s, *rest in tagged if s != val_sess]
     val_samples = [rest for s, *rest in tagged if s == val_sess]
     if not val_samples:  # single session: fall back to a random tail
