@@ -338,8 +338,10 @@ def evaluate(recs, screen):
     return report, m
 
 
-def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
+def run(dataset_root="data/dataset", model_out=None,
         do_clean=True, do_update=True, train_cnn=False):
+    from .dataset import model_path_for
+    model_out = model_out or model_path_for()
     root = Path(dataset_root)
     recs, screen = load_records(root)
     if not recs or screen is None:

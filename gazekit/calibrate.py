@@ -261,10 +261,12 @@ def validate(win, cap, tracker, model, writer=None, seed=None):
             np.vstack(Xp), np.vstack(Yp))
 
 
-def run(camera_index=0, points=16, rounds=2, model_out="data/gaze_model.pkl",
+def run(camera_index=0, points=16, rounds=2, model_out=None,
         dataset_root="data/dataset", landmarker="models/face_landmarker.task",
         screen=None):
+    from .dataset import model_path_for
     from .screen import screen_size
+    model_out = model_out or model_path_for()
     sw, sh = screen or screen_size()
     diag = float(np.hypot(sw, sh))
 

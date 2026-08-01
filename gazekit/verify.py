@@ -88,7 +88,16 @@ def run(camera_index=0, mode="free", teach=False,
     sw, sh = screen or screen_size()
     model = GazeModel.load(model_path)
     tracker = FaceTracker(landmarker)
-    cap = open_camera(camera_index)
+    def _waiting(elapsed):
+        img = win.canvas()
+        ui.center_text(img, "connecting to the camera...", int(sh * 0.44), 1.0)
+        ui.center_text(img, f"{elapsed:.0f}s — phone: keep GazeTeacher in the "
+                       "FOREGROUND, unlocked   (q to quit)", int(sh * 0.51),
+                       0.7, (150, 150, 150))
+        win.show(img)
+
+    _waiting(0)
+    cap = open_camera(camera_index, on_wait=_waiting)
     win = ui.FullscreenWindow("gazekit-verify", (sw, sh))
     writer = DatasetWriter(dataset_root, (sw, sh)) if teach else None
 

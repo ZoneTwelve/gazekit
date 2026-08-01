@@ -21,6 +21,24 @@ import numpy as np
 EYE_LM_IDX = list(range(468, 478)) + [33, 133, 362, 263, 159, 145, 386, 374]
 
 
+def camera_source():
+    """Which camera the current run uses — phone frames and webcam frames
+    are DIFFERENT DOMAINS (a webcam-trained model scored 1227px on phone
+    probes), so models and evaluation are kept per source."""
+    try:
+        return json.loads(CONFIG_PATH.read_text()).get("camera", "0")
+    except (OSError, json.JSONDecodeError):
+        return "0"
+
+
+CONFIG_PATH = Path("data/config.json")
+
+
+def model_path_for(source=None, base="data/gaze_model"):
+    src = source if source is not None else camera_source()
+    return f"{base}.pkl" if src != "phone" else f"{base}_phone.pkl"
+
+
 class DatasetWriter:
     def __init__(self, root: str | Path, screen_size: tuple[int, int]):
         stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -29,7 +47,9 @@ class DatasetWriter:
         self.crops.mkdir(parents=True, exist_ok=True)
         self._f = open(self.dir / "samples.jsonl", "w")
         self._n = 0
-        self._f.write(json.dumps({"meta": True, "screen_size": list(screen_size)}) + "\n")
+        self._f.write(json.dumps({"meta": True,
+                                  "screen_size": list(screen_size),
+                                  "camera": camera_source()}) + "\n")
 
     def save_context(self, frame_bgr):
         """One full-frame snapshot per session for offline environment

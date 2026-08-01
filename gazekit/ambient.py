@@ -283,14 +283,25 @@ def _popup(dot, cap, tracker, model, target, voice, cue="look"):
     return "looked", err, feats, kept
 
 
-def run(camera_index=0, model_path="data/gaze_model.pkl",
+def run(camera_index=0, model_path=None,
         dataset_root="data/dataset", landmarker="models/face_landmarker.task",
         interval=(15.0, 45.0), screen=None, voice=True):
+    from .dataset import model_path_for
     from .screen import screen_size
+    model_path = model_path or model_path_for()
     sw, sh = screen or screen_size()
     model = GazeModel.load(model_path)
     tracker = FaceTracker(landmarker)
-    cap = open_camera(camera_index)
+    def _waiting(elapsed):
+        img = win.canvas()
+        ui.center_text(img, "connecting to the camera...", int(sh * 0.44), 1.0)
+        ui.center_text(img, f"{elapsed:.0f}s — phone: keep GazeTeacher in the "
+                       "FOREGROUND, unlocked   (q to quit)", int(sh * 0.51),
+                       0.7, (150, 150, 150))
+        win.show(img)
+
+    _waiting(0)
+    cap = open_camera(camera_index, on_wait=_waiting)
     writer = DatasetWriter(dataset_root, (sw, sh))
     dot = OverlayDot()
     log_path = Path("data/ambient_log.jsonl")

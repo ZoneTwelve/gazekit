@@ -148,8 +148,8 @@ def run(camera_index=0, backend="ridge", model_path=None,
         cnn = CnnPredictor("data/gaze_cnn.pt" if backend == "hybrid"
                            else (model_path or "data/gaze_cnn.pt"), (sw, sh))
     if backend in ("ridge", "hybrid"):
-        ridge = GazeModel.load("data/gaze_model.pkl" if backend == "hybrid"
-                               else (model_path or "data/gaze_model.pkl"))
+        from .dataset import model_path_for
+        ridge = GazeModel.load(model_path or model_path_for())
     if backend == "eyeball":
         from .eyeball import EyeballPredictor
         eyeball = EyeballPredictor((sw, sh))
@@ -186,7 +186,16 @@ def run(camera_index=0, backend="ridge", model_path=None,
                          lambda ev, x, y, flags, param:
                          clicks.append((x, y)) if ev == cv2.EVENT_LBUTTONDOWN
                          else None)
-    cap = open_camera(camera_index)
+    def waiting(elapsed):
+        img = win.canvas()
+        ui.center_text(img, "connecting to the camera...", int(sh * 0.44), 1.0)
+        ui.center_text(img, f"{elapsed:.0f}s — phone: keep GazeTeacher in the "
+                       "FOREGROUND, unlocked   (q to quit)", int(sh * 0.51),
+                       0.7, (150, 150, 150))
+        win.show(img)
+
+    waiting(0)
+    cap = open_camera(camera_index, on_wait=waiting)
     tracker = FaceTracker(landmarker)
     smoother = GazeSmoother()
     gate = BlinkGate()

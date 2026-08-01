@@ -194,12 +194,23 @@ POSTURES = [
 
 
 def run(scenario, camera_index=0, dataset_root="data/dataset",
-        model_out="data/gaze_model.pkl",
+        model_out=None,
         landmarker="models/face_landmarker.task", screen=None):
+    from .dataset import model_path_for
     from .screen import screen_size
+    model_out = model_out or model_path_for()
     sw, sh = screen or screen_size()
     win = ui.FullscreenWindow("gazekit-collect", (sw, sh))
-    cap = open_camera(camera_index)
+    def _waiting(elapsed):
+        img = win.canvas()
+        ui.center_text(img, "connecting to the camera...", int(sh * 0.44), 1.0)
+        ui.center_text(img, f"{elapsed:.0f}s — phone: keep GazeTeacher in the "
+                       "FOREGROUND, unlocked   (q to quit)", int(sh * 0.51),
+                       0.7, (150, 150, 150))
+        win.show(img)
+
+    _waiting(0)
+    cap = open_camera(camera_index, on_wait=_waiting)
     tracker = FaceTracker(landmarker)
     writer = DatasetWriter(dataset_root, (sw, sh))
     refit_ridge = scenario not in ("pursuit", "blinks")

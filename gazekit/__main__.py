@@ -101,6 +101,10 @@ def main():
     ar.add_argument("--monitor", action="store_true",
                     help="live viewer of the phone's frames + gaze numbers")
 
+    sub.add_parser("selftest",
+                    help="automated release checks "
+                         "(no camera needed)")
+
     j = sub.add_parser("journal", help="show the unified run journal")
     j.add_argument("--last", type=int, default=15)
 
@@ -243,6 +247,10 @@ def _dispatch(args):
             monitor()
         else:
             receive()
+
+    elif args.cmd == "selftest":
+        from .selftest import run
+        return run()
 
     elif args.cmd == "camera":
         from .phonecam import phone_control

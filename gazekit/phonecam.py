@@ -25,6 +25,25 @@ import numpy as np
 FRAME_PORT = 5578
 GAZE_PORT = 5577
 CONFIG = Path("data/config.json")
+STATUS = Path("data/phone_status.json")
+
+
+def write_status(**kw):
+    """Heartbeat any owner of the phone ports writes, so `camera status`
+    can report while a collection run holds the sockets."""
+    try:
+        STATUS.parent.mkdir(parents=True, exist_ok=True)
+        STATUS.write_text(json.dumps({"t": time.time(), **kw}))
+    except OSError:
+        pass
+
+
+def read_status(max_age=8.0):
+    try:
+        s = json.loads(STATUS.read_text())
+        return s if time.time() - s.get("t", 0) < max_age else None
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 def default_camera():
@@ -52,9 +71,19 @@ def phone_control(action, wait_s=30):
     try:
         srv.bind(("0.0.0.0", FRAME_PORT))
     except OSError:
+        # a collection run owns the sockets — report from its heartbeat
+        # instead of failing (status must work while the server runs)
+        st = read_status()
+        if action == "status" and st:
+            age = time.time() - st["t"]
+            print(f"status (via running {st.get('owner','?')} process, "
+                  f"{age:.1f}s ago): connected={st.get('connected')} "
+                  f"frames={st.get('frames')} gaze={st.get('gaze')}"
+                  + (f" waiting={st['waiting']}s" if "waiting" in st else ""))
+            return
         raise SystemExit(f"port {FRAME_PORT} busy — a `--camera phone` "
-                         "process owns the phone right now; control it "
-                         "from there")
+                         "process owns the phone; `camera status` can still "
+                         "report if that process is heartbeating")
     srv.listen(1)
     srv.settimeout(wait_s)
     from .arkit import _local_ip
@@ -126,6 +155,7 @@ class PhoneCamera:
         self._rotation = None
         self._conn = None
         self._gaze_n = 0
+        self._frames_n = 0
         self.gaze_path = None
 
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -153,6 +183,8 @@ class PhoneCamera:
                 print(f"  ...{elapsed:.0f}s  tcp-connected="
                       f"{self._conn is not None}  gaze="
                       f"{self._gaze_n}", flush=True)
+            write_status(owner="camera", connected=self._conn is not None,
+                         frames=0, gaze=self._gaze_n, waiting=round(elapsed))
             if elapsed > wait_s:
                 self.release()
                 raise SystemExit(
@@ -185,7 +217,10 @@ class PhoneCamera:
                 buf += chunk
                 while len(buf) >= 4:
                     n = struct.unpack(">I", buf[:4])[0]
-                    if n > 8_000_000 or n == 0:   # desync guard
+                    if n == 0:            # heartbeat ping from the phone
+                        buf = buf[4:]
+                        continue
+                    if n > 8_000_000:     # desync guard
                         buf = b""
                         break
                     if len(buf) < 4 + n:
@@ -202,6 +237,11 @@ class PhoneCamera:
                                 with self._lock:
                                     self._frame = img
                                 self._fresh.set()
+                            self._frames_n += 1
+                            if self._frames_n % 10 == 0:
+                                write_status(owner="camera", connected=True,
+                                             frames=self._frames_n,
+                                             gaze=self._gaze_n)
                     except (json.JSONDecodeError, KeyError, ValueError):
                         pass
             except socket.timeout:
