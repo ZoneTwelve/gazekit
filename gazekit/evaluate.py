@@ -364,8 +364,16 @@ def run(dataset_root="data/dataset", model_out=None,
     if do_clean:
         kept, pruned, stats = clean(recs, screen)
         n_pruned = sum(len(v) for v in pruned.values())
+        # MERGE, never overwrite: a domain-filtered run only sees its own
+        # sessions, and a plain dump would erase the other domain's prunes
+        merged = {k: set(v) for k, v in load_pruned(root).items()}
+        touched = {r["session"] for r in recs}
+        for s in touched:            # this domain's sessions get re-decided
+            merged.pop(s, None)
+        for s, ids in pruned.items():
+            merged.setdefault(s, set()).update(ids)
         with open(root / "pruned.json", "w") as f:
-            json.dump(pruned, f)
+            json.dump({k: sorted(v) for k, v in merged.items()}, f)
         print(f"clean: pruned {n_pruned} samples "
               f"({', '.join(f'{k}={v}' for k, v in stats.items()) or 'none'})"
               f" -> {root / 'pruned.json'}")
