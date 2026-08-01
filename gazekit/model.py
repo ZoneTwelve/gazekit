@@ -135,8 +135,13 @@ class GazeModel:
               if sample_weight is not None else {})
         self.pipe.fit(transform(X), Y, **kw)
 
-    def predict(self, feats: np.ndarray) -> np.ndarray:
+    def predict(self, feats: np.ndarray, clip: bool = True) -> np.ndarray:
         out = self.pipe.predict(transform(feats))[0] + self.bias
+        if not clip:
+            # raw model space — alignment fits need this: fitting on values
+            # already clipped to the screen box destroys the variance the
+            # fit relies on, so a saturated model could never be re-aligned
+            return out
         w, h = self.screen_size
         return np.clip(out, [0, 0], [w - 1, h - 1])
 
