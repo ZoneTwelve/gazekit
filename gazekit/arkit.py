@@ -23,6 +23,18 @@ PAIR_TOL_S = 0.06
 
 
 def _local_ip():
+    """Prefer the Wi-Fi/Ethernet LAN address — the default-route trick can
+    return a VPN/Tailscale address the phone can't reach."""
+    import subprocess
+    for iface in ("en0", "en1"):
+        try:
+            ip = subprocess.run(["ipconfig", "getifaddr", iface],
+                                capture_output=True, text=True,
+                                timeout=3).stdout.strip()
+            if ip:
+                return ip
+        except Exception:
+            pass
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))
