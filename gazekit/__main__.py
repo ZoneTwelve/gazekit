@@ -88,8 +88,48 @@ def main():
     t.add_argument("--out", default="data/gaze_cnn.pt")
     t.add_argument("--epochs", type=int, default=30)
 
+    j = sub.add_parser("journal", help="show the unified run journal")
+    j.add_argument("--last", type=int, default=15)
+
     args = p.parse_args()
 
+    if args.cmd == "journal":
+        from .journal import summary
+        print(summary(args.last))
+        return
+
+    # every command is journaled: data/journal.jsonl records run counts,
+    # results and recommendations so any later session (human or assistant)
+    # can see what happened without scrolling terminal history
+    import sys
+    import time
+    from .journal import log_run
+    t0 = time.monotonic()
+    status, result = "done", None
+    try:
+        result = _dispatch(args)
+    except KeyboardInterrupt:
+        status = "aborted"
+    except SystemExit as e:
+        status = "failed" if e.code else "done"
+        raise
+    except Exception:
+        status = "failed"
+        raise
+    finally:
+        keep = None
+        if isinstance(result, dict):
+            keep = {k: result[k] for k in
+                    ("verdict", "mean_error_px", "kept_deployed",
+                     "deployed_probe_err_px", "loso_px", "loso_aligned_px",
+                     "loto_px", "samples", "recommendations",
+                     "per_condition_px", "mean_px", "median_px", "p90_px",
+                     "n") if k in result}
+        log_run(args.cmd, sys.argv[1:], status,
+                time.monotonic() - t0, keep)
+
+
+def _dispatch(args):
     if args.cmd == "auto":
         from .auto import run
         run(camera_index=args.camera, full=args.full,
@@ -132,10 +172,12 @@ def main():
             print(f"verdict: {report['verdict']}  "
                   f"mean error {report['mean_error_px']}px "
                   f"({100 * report['mean_error_frac_diag']:.1f}% of diagonal)")
+        return report
 
     elif args.cmd == "collect":
         from .collect import run
-        run(args.scenario, camera_index=args.camera)
+        return {"n": 1} if run(args.scenario, camera_index=args.camera) \
+            else None
 
     elif args.cmd == "live":
         from .live import run
@@ -154,12 +196,13 @@ def main():
 
     elif args.cmd == "verify":
         from .verify import run
-        run(camera_index=args.camera, mode=args.mode, teach=args.teach)
+        return run(camera_index=args.camera, mode=args.mode,
+                   teach=args.teach)
 
     elif args.cmd == "iterate":
         from .evaluate import run
-        run(do_clean=not args.no_clean, do_update=not args.no_update,
-            train_cnn=args.cnn)
+        return run(do_clean=not args.no_clean,
+                   do_update=not args.no_update, train_cnn=args.cnn)
 
     elif args.cmd == "annotate":
         from .annotate import run

@@ -152,6 +152,7 @@ def train(dataset_root="data/dataset", out="data/gaze_cnn.pt",
     best = float("inf")
     since_best = 0
     Path(out).parent.mkdir(parents=True, exist_ok=True)
+    tmp_out = str(out) + ".tmp"
     for ep in range(1, epochs + 1):
         net.train()
         for r, l, hd, y in tl:
@@ -173,7 +174,7 @@ def train(dataset_root="data/dataset", out="data/gaze_cnn.pt",
         if val_err < best:
             best = val_err
             since_best = 0
-            torch.save(net.state_dict(), out)
+            torch.save(net.state_dict(), tmp_out)
             marker = "  * saved"
         else:
             since_best += 1
@@ -182,8 +183,33 @@ def train(dataset_root="data/dataset", out="data/gaze_cnn.pt",
         if since_best >= patience:
             print(f"early stop: no improvement for {patience} epochs")
             break
-    print(f"best model -> {out}  (val err {best * 100:.1f}% of screen, "
-          "held-out session)")
+
+    # promote gate: never blindly overwrite the deployed CNN — score the
+    # incumbent on THIS run's validation set and keep the winner
+    import os
+    prev_err = float("inf")
+    if Path(out).exists():
+        try:
+            prev = GazeNet().to(dev)
+            prev.load_state_dict(torch.load(out, map_location=dev))
+            prev.eval()
+            errs = []
+            with torch.no_grad():
+                for r, l, hd, y in vl:
+                    pred = prev(r.to(dev), l.to(dev), hd.to(dev)).cpu()
+                    errs.append(torch.linalg.norm(pred - y, dim=1))
+            prev_err = torch.cat(errs).mean().item()
+        except Exception:
+            pass
+    if prev_err <= best:
+        os.remove(tmp_out)
+        print(f"deployed CNN kept: previous model scores "
+              f"{prev_err * 100:.1f}% on this val set vs new "
+              f"{best * 100:.1f}%")
+    else:
+        os.replace(tmp_out, out)
+        print(f"new model promoted -> {out}  (val err {best * 100:.1f}% vs "
+              f"previous {prev_err * 100:.1f}%)")
 
 
 class CnnPredictor:

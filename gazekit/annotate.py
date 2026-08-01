@@ -21,6 +21,8 @@ MODEL_ID = "microsoft/Florence-2-base-ft"
 
 
 def _load_model():
+    import os
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     import torch
     from transformers import AutoModelForCausalLM, AutoProcessor
     device = "mps" if torch.backends.mps.is_available() else "cpu"

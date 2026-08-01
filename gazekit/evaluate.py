@@ -425,6 +425,45 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
     except Exception as e:
         print(f"  (annotation skipped: {e})")
 
+    # advisor: turn the numbers into "what to improve next" so nobody has
+    # to interpret the tables — recommendations derived from this project's
+    # own research findings
+    rec = []
+    cov = report.get("coverage", {})
+    if cov.get("days", 9) < 3:
+        rec.append("collect on more days/lighting: run `collect daily` "
+                   "(biggest measured gap)")
+    if report.get("loso_y_px", 0) > 1.8 * max(report.get("loso_x_px", 1), 1):
+        rec.append("vertical axis is the weak one: `collect vor` + trust the "
+                   "hybrid backend (CNN helps vertical most)")
+    if report.get("loso_p95_px", 0) > 2.2 * max(report.get("loso_p50_px", 1), 1):
+        rm = report.get("region_map_px") or []
+        worst = max(((v, (i, j)) for i, row in enumerate(rm)
+                     for j, v in enumerate(row) if v), default=None)
+        where = (f" (worst region row{worst[1][0]} col{worst[1][1]}, "
+                 f"{worst[0]:.0f}px)" if worst else "")
+        rec.append("heavy error tail" + where + ": ambient bandit will "
+                   "target it; a `verify --mode path` run localizes it")
+    tag_px = report.get("per_tag_px", {})
+    if tag_px.get("posture", 0) > 2 * report.get("loso_px", 1e9):
+        rec.append("posture extrapolation is weak: one more `collect "
+                   "posture` at a genuinely different sitting position")
+    cond = report.get("per_condition_px", {})
+    if len(cond) >= 2 and max(cond.values()) > 1.5 * min(cond.values()):
+        worst_c = max(cond, key=cond.get)
+        rec.append(f"condition '{worst_c}' is much worse — collect more "
+                   "sessions under it")
+    if report.get("eyeball_loso_px") and report.get("loso_px") and \
+            report["eyeball_loso_px"] < report["loso_px"] * 0.9:
+        rec.append("3D eyeball model is beating ridge — consider promoting it")
+    if not rec:
+        rec.append("no glaring gap — keep ambient running and re-check the "
+                   "trend after the next collection")
+    report["recommendations"] = rec
+    print("\nadvice:")
+    for r in rec:
+        print(f"  - {r}")
+
     entry = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), **report,
              "pruned": sum(len(v) for v in load_pruned(root).values()),
              "updated": updated}

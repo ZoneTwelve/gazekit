@@ -18,8 +18,10 @@ Every accepted sample is also written to the on-disk dataset for CNN
 post-training (see dataset.py / cnn.py).
 """
 
+import json
 import random
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -310,7 +312,32 @@ def run(camera_index=0, points=16, rounds=2, model_out="data/gaze_model.pkl",
         verdict = ("STABLE" if frac <= PASS_FRAC else
                    "USABLE" if frac <= MARGINAL_FRAC else "POOR - recalibrate")
         report["verdict"] = verdict
-        model.save(model_out, report)
+
+        # deploy gate: never blindly overwrite the deployed model — score
+        # the incumbent on the SAME fresh probe samples (held out from both
+        # models' training) and keep the winner
+        keep_old = False
+        if Xp is not None:
+            try:
+                old = GazeModel.load(model_out)
+                errs = []
+                for t in np.unique(Yp, axis=0):
+                    m_ = (Yp == t).all(axis=1)
+                    pred = np.median([old.predict(f) for f in Xp[m_]], axis=0)
+                    errs.append(float(np.hypot(*(pred - t))))
+                old_err = float(np.mean(errs))
+                report["deployed_probe_err_px"] = round(old_err, 1)
+                keep_old = old_err <= mean_err
+            except Exception:
+                pass
+        if keep_old:
+            report["kept_deployed"] = True
+            with open(Path(model_out).with_suffix(".report.json"), "w") as f:
+                json.dump(report, f, indent=2)
+            print(f"deployed model kept ({report['deployed_probe_err_px']}px "
+                  f"on fresh probes vs this calibration's {mean_err:.0f}px)")
+        else:
+            model.save(model_out, report)
 
         img = win.canvas()
         ui.center_text(img, f"Verdict: {verdict}", int(sh * 0.4), 1.3,
