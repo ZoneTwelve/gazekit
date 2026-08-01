@@ -142,7 +142,7 @@ def run(camera_index=0, backend="ridge", model_path=None,
     from .filters import GazeSmoother
     sw, sh = screen or screen_size()
 
-    ridge = cnn = None
+    ridge = cnn = eyeball = None
     if backend in ("cnn", "hybrid"):
         from .cnn import CnnPredictor
         cnn = CnnPredictor("data/gaze_cnn.pt" if backend == "hybrid"
@@ -150,12 +150,17 @@ def run(camera_index=0, backend="ridge", model_path=None,
     if backend in ("ridge", "hybrid"):
         ridge = GazeModel.load("data/gaze_model.pkl" if backend == "hybrid"
                                else (model_path or "data/gaze_model.pkl"))
+    if backend == "eyeball":
+        from .eyeball import EyeballPredictor
+        eyeball = EyeballPredictor((sw, sh))
 
     # offline ensemble sweep: blend error is U-shaped in alpha with the
     # minimum at ~0.4 ridge / 0.6 cnn — better than either model alone
     HYBRID_RIDGE_W = 0.4
 
     def predict(obs):
+        if eyeball is not None:
+            return eyeball.predict(obs)
         if ridge is not None and cnn is not None:
             pr, pc = ridge.predict(obs.features), cnn.predict(obs)
             return (pr if pc is None
@@ -164,7 +169,8 @@ def run(camera_index=0, backend="ridge", model_path=None,
             return cnn.predict(obs)
         return ridge.predict(obs.features)
 
-    active = ridge if ridge is not None else cnn
+    active = ridge if ridge is not None else (cnn if cnn is not None
+                                              else eyeball)
 
     # base data for click-teach refits (ridge backend only)
     base_X, base_Y, base_w = (None, None, None)

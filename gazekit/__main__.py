@@ -42,7 +42,8 @@ def main():
 
     l = sub.add_parser("live", help="show the live gaze dot")
     l.add_argument("--camera", type=int, default=0)
-    l.add_argument("--backend", choices=("ridge", "cnn", "hybrid"),
+    l.add_argument("--backend",
+                   choices=("ridge", "cnn", "hybrid", "eyeball"),
                    default="ridge")
     l.add_argument("--model", default=None)
     l.add_argument("--no-align", action="store_true",

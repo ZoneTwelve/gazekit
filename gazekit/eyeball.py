@@ -98,6 +98,36 @@ class EyeballModel:
         return np.clip(out, [0, 0], [w - 1, h - 1])
 
 
+class EyeballPredictor:
+    """Live-mode wrapper: fits from the stored raw-landmark sessions at
+    startup (lstsq — instant) and predicts straight from a tracker
+    Observation. Exposes .bias so live-mode recentering works."""
+
+    def __init__(self, screen_size, dataset_root="data/dataset"):
+        from .dataset import EYE_LM_IDX
+        self._idx = EYE_LM_IDX
+        samples = list(load_training_samples(dataset_root))
+        if len(samples) < 100:
+            raise SystemExit(
+                f"eyeball backend needs sessions recorded with raw landmarks "
+                f"(have {len(samples)} samples) — any calibrate/collect run "
+                "with current code produces them")
+        self.model = EyeballModel()
+        train_err = self.model.fit(samples, screen_size)
+        n_sess = len({s['session'] for s in samples})
+        print(f"eyeball model: fit on {len(samples)} samples / "
+              f"{n_sess} session(s), train err ~{train_err:.0f}px")
+        self.bias = np.zeros(2)
+
+    def predict(self, obs):
+        if obs.landmarks_px is None or "tmatrix" not in obs.extras:
+            return None
+        p = self.model.predict(obs.landmarks_px[self._idx],
+                               obs.extras["tmatrix"])
+        w, h = self.model.screen_size
+        return np.clip(p + self.bias, [0, 0], [w - 1, h - 1])
+
+
 def load_training_samples(dataset_root="data/dataset"):
     """Yield dwell-quality records that carry the raw eye_lm + tmatrix
     fields (older sessions predate them), augmented with "session" and
