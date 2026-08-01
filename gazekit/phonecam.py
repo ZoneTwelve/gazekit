@@ -314,31 +314,77 @@ class PhoneCamera:
 
     # --- orientation ---------------------------------------------------
     def _auto_orient(self, landmarker):
+        """Pick the frame rotation, then REMEMBER it.
+
+        MediaPipe detects faces in sideways images too, so 'first rotation
+        that finds a face' is non-deterministic — a live run once locked
+        'none' while its calibration had locked '90cw', which silently
+        destroyed the geometry. Score all four and keep the clearly best;
+        persist it so every later run matches the calibration."""
         from .tracker import FaceTracker
+        names = {None: "none", cv2.ROTATE_90_CLOCKWISE: "90cw",
+                 cv2.ROTATE_90_COUNTERCLOCKWISE: "90ccw",
+                 cv2.ROTATE_180: "180"}
+        saved = None
+        try:
+            saved = json.loads(CONFIG.read_text()).get("camera_rotation")
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        frames = []
+        for _ in range(6):
+            self._fresh.clear()
+            if not self._fresh.wait(2.0):
+                break
+            with self._lock:
+                frames.append(self._frame.copy())
+        if not frames:
+            print("warning: no frames to orient with — using frames as-is")
+            return
+
         probe = FaceTracker(landmarker)
         try:
+            scores = {}
             for rot in ROTATIONS:
-                hits = 0
-                for _ in range(6):
-                    self._fresh.clear()
-                    if not self._fresh.wait(2.0):
-                        break
-                    with self._lock:
-                        img = self._frame.copy()
-                    if rot is not None:
-                        img = cv2.rotate(img, rot)
-                    if probe.process(img).ok:
+                # score = detections, tie-broken by how upright the eye line
+                # is (a correctly-rotated face has a near-horizontal one)
+                hits, tilt = 0, []
+                for img in frames:
+                    im = img if rot is None else cv2.rotate(img, rot)
+                    obs = probe.process(im)
+                    if obs.ok and obs.landmarks_px is not None:
                         hits += 1
-                    if hits >= 2:
-                        self._rotation = rot
-                        name = {None: "none",
-                                cv2.ROTATE_90_CLOCKWISE: "90cw",
-                                cv2.ROTATE_90_COUNTERCLOCKWISE: "90ccw",
-                                cv2.ROTATE_180: "180"}[rot]
-                        print(f"orientation locked: rotate={name}")
-                        return
-            print("warning: no face found in any rotation — using frames "
-                  "as-is (fix framing and restart if tracking fails)")
+                        d = obs.landmarks_px[263] - obs.landmarks_px[33]
+                        tilt.append(abs(float(np.degrees(
+                            np.arctan2(d[1], d[0])))))
+                scores[rot] = (hits, -np.mean(tilt) if tilt else -180.0)
+            best = max(scores, key=lambda r: scores[r])
+            if scores[best][0] == 0:
+                print("warning: no face found in any rotation — using frames "
+                      "as-is (fix framing and restart if tracking fails)")
+                return
+            # a saved rotation wins ties so runs stay consistent with the
+            # calibration that produced the deployed model
+            if saved is not None:
+                for rot, name in names.items():
+                    if name == saved and scores[rot][0] >= scores[best][0] - 1:
+                        best = rot
+                        break
+            self._rotation = best
+            name = names[best]
+            print(f"orientation locked: rotate={name} "
+                  f"(hits={scores[best][0]}/{len(frames)}, "
+                  f"eye tilt {-scores[best][1]:.0f}deg"
+                  + (", from config" if name == saved else "") + ")")
+            if name != saved:
+                try:
+                    cfg = json.loads(CONFIG.read_text()) if CONFIG.exists() else {}
+                    cfg["camera_rotation"] = name
+                    CONFIG.write_text(json.dumps(cfg))
+                    print(f"  remembered camera_rotation={name} in "
+                          f"{CONFIG} (delete it to re-probe)")
+                except OSError:
+                    pass
         finally:
             probe.close()
 
