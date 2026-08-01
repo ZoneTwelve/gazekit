@@ -32,25 +32,35 @@ MAD_LIMIT = 5.0  # max robust-z over 8 dims inflates scores; 4.0 over-pruned
 RESIDUAL_LIMIT_PX = 320.0
 
 
-def load_records(root: str | Path):
+def load_records(root: str | Path, source=None):
     """All dwell samples with provenance (ignores existing prune list — the
-    clean stage re-decides from scratch each run)."""
+    clean stage re-decides from scratch each run).
+
+    source filters by camera domain: phone frames and webcam frames produce
+    incompatible features (a mixed model predicted a near-constant point),
+    so training only ever sees one domain. Sessions recorded before the
+    camera field existed are webcam."""
     recs, screen = [], None
     for sess in sorted(Path(root).glob("session_*")):
         jl = sess / "samples.jsonl"
         if not jl.exists():
             continue
+        sess_cam = "0"
+        rows = []
         for line in open(jl):
             rec = json.loads(line)
             if rec.get("meta"):
                 screen = rec["screen_size"]
+                sess_cam = rec.get("camera", "0")
                 continue
             if rec.get("tag") not in DWELL_TAGS:
                 continue
-            recs.append({"session": sess.name, "i": rec["i"],
-                         "tag": rec["tag"],
+            rows.append({"session": sess.name, "i": rec["i"],
+                         "tag": rec["tag"], "camera": sess_cam,
                          "X": np.array(rec["features"]),
                          "Y": np.array(rec["target"], dtype=float)})
+        if source is None or sess_cam == source:
+            recs.extend(rows)
     return recs, screen
 
 
@@ -340,10 +350,12 @@ def evaluate(recs, screen):
 
 def run(dataset_root="data/dataset", model_out=None,
         do_clean=True, do_update=True, train_cnn=False):
-    from .dataset import model_path_for
-    model_out = model_out or model_path_for()
+    from .dataset import camera_source, model_path_for
+    source = camera_source()
+    model_out = model_out or model_path_for(source)
     root = Path(dataset_root)
-    recs, screen = load_records(root)
+    recs, screen = load_records(root, source=source)
+    print(f"camera domain: {source} -> {model_out}")
     if not recs or screen is None:
         raise SystemExit("no dwell data found — run `calibrate` first")
     print(f"loaded {len(recs)} dwell samples from "
