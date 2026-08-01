@@ -126,8 +126,11 @@ def monitor():
 
 
 def _record_stream_bg(stop_event, port=PORT):
-    """In-process ARKit stream recorder (background thread)."""
+    """In-process ARKit stream recorder (background thread).
+    Returns a stats dict whose "n" counts received packets — the liveness
+    signal for connection gating."""
     import threading
+    stats = {"n": 0}
 
     def loop():
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -149,6 +152,7 @@ def _record_stream_bg(stop_event, port=PORT):
                     pkt["t_recv"] = time.time()
                     f.write(json.dumps(pkt) + "\n")
                     n += 1
+                    stats["n"] = n
                     if n % 15 == 0:
                         f.flush()
                 except (socket.timeout, json.JSONDecodeError):
@@ -158,7 +162,7 @@ def _record_stream_bg(stop_event, port=PORT):
 
     t = threading.Thread(target=loop, daemon=True)
     t.start()
-    return t
+    return stats
 
 
 def calib(points=13):
@@ -174,7 +178,14 @@ def calib(points=13):
     from .ui import say
     sw, sh = screen_size()
     stop = threading.Event()
-    _record_stream_bg(stop)
+    stats = _record_stream_bg(stop)
+
+    def rate(window=0.5):
+        n0 = stats["n"]
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < window:
+            time.sleep(0.05)
+        return (stats["n"] - n0) / window
     win = ui.FullscreenWindow("gazekit-arkit-calib", (sw, sh))
     ARKIT_DIR.mkdir(parents=True, exist_ok=True)
     out = ARKIT_DIR / f"calib_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
@@ -182,6 +193,23 @@ def calib(points=13):
     import random
     random.shuffle(pts)
     try:
+        # connection gate: refuse to show a single target until the phone
+        # stream is demonstrably alive (>20 packets/s)
+        say("waiting for the phone stream")
+        while True:
+            r = rate(0.5)
+            img = win.canvas()
+            if r > 20:
+                break
+            ui.center_text(img, "waiting for GazeTeacher stream...",
+                           int(sh * 0.42), 1.0)
+            ui.center_text(img, f"receiving {r:.0f} packets/s — open the "
+                           "app, check the IP, tap Start", int(sh * 0.50),
+                           0.7, (150, 150, 150))
+            if win.show(img) in (27, ord("q")):
+                raise KeyboardInterrupt
+        say("connected")
+
         with open(out, "w") as f:
             f.write(json.dumps({"meta": True, "screen_size": [sw, sh]}) + "\n")
             # blink break: a fresh tear film before sampling — dry eyes
@@ -194,7 +222,10 @@ def calib(points=13):
                                int(sh * 0.45), 1.0)
                 if win.show(img) in (27, ord("q")):
                     raise KeyboardInterrupt
-            for i, (x, y) in enumerate(pts):
+
+            i = 0
+            while i < len(pts):
+                x, y = pts[i]
                 t0 = time.monotonic()
                 while time.monotonic() - t0 < 0.8:   # settle, not logged
                     img = win.canvas()
@@ -204,14 +235,29 @@ def calib(points=13):
                     if win.show(img) in (27, ord("q")):
                         raise KeyboardInterrupt
                 t_start = time.time()
+                n_start = stats["n"]
                 t0 = time.monotonic()
                 while time.monotonic() - t0 < 1.3:   # dwell, logged window
                     img = win.canvas()
                     ui.draw_target(img, x, y, 1.0)
                     if win.show(img) in (27, ord("q")):
                         raise KeyboardInterrupt
+                got = stats["n"] - n_start
+                if got < 15:
+                    # stream died mid-point: window is invalid — wait for
+                    # the phone to come back, then REDO this point
+                    say("phone stream lost")
+                    while rate(0.5) < 20:
+                        img = win.canvas()
+                        ui.center_text(img, "stream lost — waiting for the "
+                                       "phone...", int(sh * 0.45), 1.0)
+                        if win.show(img) in (27, ord("q")):
+                            raise KeyboardInterrupt
+                    say("resumed")
+                    continue
                 f.write(json.dumps({"t_start": t_start, "t_end": time.time(),
-                                    "target": [x, y]}) + "\n")
+                                    "target": [x, y], "frames": got}) + "\n")
+                i += 1
         print(f"done -> {out}  (now run `gazekit arkit --fit`)")
     except KeyboardInterrupt:
         print(f"\naborted -> {out}")
@@ -312,15 +358,21 @@ def fit(dataset_root="data/dataset"):
         return make_pipeline(StandardScaler(),
                              PolynomialFeatures(2, include_bias=False),
                              Ridge(alpha=10.0))
+    # sessions with too few distinct targets (aborted calibs) can't give a
+    # meaningful held-out estimate — they still train, just aren't judges
+    def n_targets(s):
+        return len({tuple(y) for y in Y[S == s]})
     sessions = sorted(set(S))
-    if len(sessions) >= 2:
+    judges = [s for s in sessions if n_targets(s) >= 4]
+    if len(sessions) >= 2 and judges:
         errs = []
-        for s in sessions:
+        for s in judges:
             m = make().fit(X[S != s], Y[S != s])
             e = np.linalg.norm(m.predict(X[S == s]) - Y[S == s], axis=1)
             errs.append(float(np.mean(e)))
             print(f"  {s}: {errs[-1]:.0f}px (n={int((S == s).sum())})")
-        print(f"ARKit-teacher LOSO: {np.mean(errs):.0f}px")
+        print(f"ARKit-teacher LOSO: {np.mean(errs):.0f}px "
+              f"over {len(judges)} session(s)")
     model = make().fit(X, Y)
     import pickle
     with open("data/arkit_teacher.pkl", "wb") as f:
