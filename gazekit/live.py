@@ -226,6 +226,13 @@ def run(camera_index=0, backend="ridge", model_path=None,
                 if len(fresh) < 3:
                     continue
                 feats = np.median([o.features for o in fresh], axis=0)
+                # accidental-click guard: if the gaze estimate is nowhere
+                # near the click, you weren't looking there — not a label
+                p_now = predict(fresh[-1])
+                if p_now is not None and np.hypot(p_now[0] - cx,
+                                                  p_now[1] - cy) > 400:
+                    flash_until = now + 0.6
+                    continue
                 writer.add(fresh[-1], (cx, cy), tag="click")
                 if ridge is not None:
                     # undo the alignment so the taught label lives in raw

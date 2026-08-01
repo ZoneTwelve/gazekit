@@ -139,11 +139,16 @@ def run(camera_index=0, mode="free", teach=False,
             if ok_sample:
                 pred = model.predict(obs.features)
                 e = float(np.hypot(*(pred - label)))
+                # not-looking guard for TEACH labels only: a wildly
+                # disagreeing sample means eyes weren't on the cursor —
+                # still measured (verification must stay honest), never
+                # taught. iterate's residual cleaner is the second net.
+                teach_ok = teach and e < 420
                 errs.append(e)
                 gx = min(int(label[0] / sw * 3), 2)
                 gy = min(int(label[1] / sh * 3), 2)
                 region[gy][gx].append(e)
-                if teach:
+                if teach_ok:
                     writer.add(obs, tuple(label), tag="mouse")
                     n_saved += 1
                 cv2.line(img, tuple(pred.astype(int)),
