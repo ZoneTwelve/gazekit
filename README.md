@@ -29,13 +29,15 @@ First run will ask for camera permission for your terminal
 ### Pretrained models (optional)
 
 Reference weights live at
-[huggingface.co/ZoneTwelve/gazekit](https://huggingface.co/ZoneTwelve/gazekit):
+[huggingface.co/ZoneTwelve/gazekit](https://huggingface.co/ZoneTwelve/gazekit).
+They download to `models/pretrained/`, kept **separate from your own
+trained models in `data/`** so nothing of yours is overwritten:
 
 ```sh
-python -c "
-from huggingface_hub import hf_hub_download; import shutil
-for f in ('gaze_model.pkl', 'gaze_cnn.pt'):
-    shutil.copy(hf_hub_download('ZoneTwelve/gazekit', f), 'data/' + f)"
+hf download ZoneTwelve/gazekit --local-dir models/pretrained
+# or: wget https://huggingface.co/ZoneTwelve/gazekit/resolve/main/gaze_cnn.pt
+
+$PY -m gazekit live --model models/pretrained/gaze_model.pkl   # try it
 ```
 
 They are personalized to one face, camera and screen, so they will *not*

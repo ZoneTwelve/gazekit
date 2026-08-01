@@ -26,19 +26,27 @@ uv pip install -r requirements.txt \
 
 Public model repo: **https://huggingface.co/ZoneTwelve/gazekit**
 
+Downloads go to `models/pretrained/` — **never** to `data/`, which holds
+the user's own trained models. Never overwrite `data/gaze_model*.pkl` or
+`data/gaze_cnn.pt` with a download.
+
 ```sh
-python -c "
-from huggingface_hub import hf_hub_download; import shutil
-for f in ('gaze_model.pkl', 'gaze_cnn.pt'):
-    shutil.copy(hf_hub_download('ZoneTwelve/gazekit', f), 'data/' + f)
-print('downloaded to data/')"
+hf download ZoneTwelve/gazekit --local-dir models/pretrained
+# or, without the CLI:
+mkdir -p models/pretrained && cd models/pretrained
+wget https://huggingface.co/ZoneTwelve/gazekit/resolve/main/gaze_cnn.pt
+wget https://huggingface.co/ZoneTwelve/gazekit/resolve/main/gaze_model.pkl
+```
+
+Use one explicitly without touching the local model:
+
+```sh
+python -m gazekit live --model models/pretrained/gaze_model.pkl
 ```
 
 These weights are **personalized to the author's face, camera and screen**
-— they are a reference artifact, not a working tracker for someone else.
-Every user must run `gazekit auto` to build their own. Skip this download
-unless you are inspecting or comparing architectures. The training dataset
-is not public.
+— a reference artifact, not a working tracker for anyone else. Every user
+runs `gazekit auto` to build their own. The training dataset is not public.
 
 ## What the user does next
 

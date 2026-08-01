@@ -1,8 +1,10 @@
 # personal biometric data — never commit
 data/
 
-# downloaded model weights (see README setup)
+# downloaded weights: face model + optional pretrained gaze
+# models (kept apart from data/, which holds YOUR models)
 models/*.task
+models/pretrained/
 
 __pycache__/
 *.pyc
