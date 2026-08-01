@@ -89,6 +89,13 @@ def main():
     t.add_argument("--out", default="data/gaze_cnn.pt")
     t.add_argument("--epochs", type=int, default=30)
 
+    ar = sub.add_parser("arkit",
+                        help="iPhone TrueDepth gaze teacher: receive the "
+                             "GazeTeacher app stream / fit the mapping")
+    ar.add_argument("--fit", action="store_true",
+                    help="pair recorded streams with collection samples and "
+                         "fit the ARKit->screen teacher mapping")
+
     j = sub.add_parser("journal", help="show the unified run journal")
     j.add_argument("--last", type=int, default=15)
 
@@ -204,6 +211,13 @@ def _dispatch(args):
         from .evaluate import run
         return run(do_clean=not args.no_clean,
                    do_update=not args.no_update, train_cnn=args.cnn)
+
+    elif args.cmd == "arkit":
+        from .arkit import fit, receive
+        if args.fit:
+            fit()
+        else:
+            receive()
 
     elif args.cmd == "annotate":
         from .annotate import run
