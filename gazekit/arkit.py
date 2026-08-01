@@ -49,7 +49,13 @@ def receive(port=PORT):
     ARKIT_DIR.mkdir(parents=True, exist_ok=True)
     out = ARKIT_DIR / f"stream_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", port))
+    try:
+        sock.bind(("0.0.0.0", port))
+    except OSError:
+        raise SystemExit(
+            f"port {port} already in use — a receiver is already running "
+            "and recording (check `pgrep -fl 'gazekit arkit'`); no need to "
+            "start another")
     sock.settimeout(1.0)
     print(f"listening on {_local_ip()}:{port} — enter that IP in the "
           f"GazeTeacher app.  recording to {out}   (Ctrl+C to stop)")
