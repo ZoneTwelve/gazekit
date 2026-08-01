@@ -113,7 +113,9 @@ def _quick_align(win, cap, tracker, predict):
                            int(win.h * 0.4), 0.8)
             win.show(img)
             if obs.ok and obs.blink < 0.3 and time.monotonic() - t0 > 0.6:
-                p = predict(obs)
+                # unclipped: a model saturated off-screen (posture far from
+                # calibration) still has usable variance in raw space
+                p = predict(obs, clip=False)
                 if p is not None:
                     preds.append(p)
         if len(preds) >= 5:
@@ -129,7 +131,11 @@ def _quick_align(win, cap, tracker, predict):
             out += [1.0, float(np.mean(T[:, ax]) - np.mean(P[:, ax]))]
             continue
         a = float(np.cov(P[:, ax], T[:, ax], bias=True)[0, 1] / var)
-        a = float(np.clip(a, 0.5, 1.8))
+        # wider than the trainer's (0.5, 1.8): a posture change between
+        # sessions can shrink/stretch the raw scale well past that, and
+        # here the fit runs on unclipped predictions so a large gain is
+        # signal, not clipping artifact
+        a = float(np.clip(a, 0.25, 4.0))
         b = float(np.mean(T[:, ax]) - a * np.mean(P[:, ax]))
         out += [a, b]
     return tuple(out)
@@ -158,16 +164,16 @@ def run(camera_index=0, backend="ridge", model_path=None,
     # minimum at ~0.4 ridge / 0.6 cnn — better than either model alone
     HYBRID_RIDGE_W = 0.4
 
-    def predict(obs):
+    def predict(obs, clip=True):
         if eyeball is not None:
             return eyeball.predict(obs)
         if ridge is not None and cnn is not None:
-            pr, pc = ridge.predict(obs.features), cnn.predict(obs)
+            pr, pc = ridge.predict(obs.features, clip=clip), cnn.predict(obs)
             return (pr if pc is None
                     else HYBRID_RIDGE_W * pr + (1 - HYBRID_RIDGE_W) * pc)
         if cnn is not None:
             return cnn.predict(obs)
-        return ridge.predict(obs.features)
+        return ridge.predict(obs.features, clip=clip)
 
     active = ridge if ridge is not None else (cnn if cnn is not None
                                               else eyeball)
@@ -257,7 +263,11 @@ def run(camera_index=0, backend="ridge", model_path=None,
                 feats = np.median([o.features for o in fresh], axis=0)
                 # accidental-click guard: if the gaze estimate is nowhere
                 # near the click, you weren't looking there — not a label
+                # compare in ALIGNED screen space — the raw model can sit a
+                # full alignment-correction away from where the dot is drawn
                 p_now = predict(fresh[-1])
+                if p_now is not None:
+                    p_now = (ax * p_now[0] + bx, ay * p_now[1] + by)
                 if p_now is not None and np.hypot(p_now[0] - cx,
                                                   p_now[1] - cy) > 400:
                     flash_until = now + 0.6
