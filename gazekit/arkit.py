@@ -84,6 +84,70 @@ def receive(port=PORT):
         sock.close()
 
 
+def calib(points=13):
+    """Camera-free calibration for the ARKit teacher: the screen shows
+    targets and logs (t_start, t_end, target); the phone's stream provides
+    the eyes. Works while GazeTeacher holds the iPhone camera — i.e. when
+    Continuity Camera (the Mac's only webcam) is unavailable."""
+    import cv2
+    from . import ui
+    from .calibrate import grid_points
+    from .screen import screen_size
+    sw, sh = screen_size()
+    win = ui.FullscreenWindow("gazekit-arkit-calib", (sw, sh))
+    ARKIT_DIR.mkdir(parents=True, exist_ok=True)
+    out = ARKIT_DIR / f"calib_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
+    pts = grid_points(sw, sh, points)
+    import random
+    random.shuffle(pts)
+    try:
+        with open(out, "w") as f:
+            f.write(json.dumps({"meta": True, "screen_size": [sw, sh]}) + "\n")
+            for i, (x, y) in enumerate(pts):
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 0.8:   # settle, not logged
+                    img = win.canvas()
+                    ui.draw_target(img, x, y, (time.monotonic() - t0) / 0.8)
+                    ui.center_text(img, f"{i + 1} / {len(pts)}", 50, 0.7,
+                                   (150, 150, 150))
+                    if win.show(img) in (27, ord("q")):
+                        raise KeyboardInterrupt
+                t_start = time.time()
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < 1.3:   # dwell, logged window
+                    img = win.canvas()
+                    ui.draw_target(img, x, y, 1.0)
+                    if win.show(img) in (27, ord("q")):
+                        raise KeyboardInterrupt
+                f.write(json.dumps({"t_start": t_start, "t_end": time.time(),
+                                    "target": [x, y]}) + "\n")
+        print(f"done -> {out}  (now run `gazekit arkit --fit`)")
+    except KeyboardInterrupt:
+        print(f"\naborted -> {out}")
+    finally:
+        cv2.destroyAllWindows()
+
+
+def _load_calib_pairs(frames, times):
+    """(features, target) pairs from camera-free calib windows."""
+    X, Y, S = [], [], []
+    for p in sorted(ARKIT_DIR.glob("calib_*.jsonl")):
+        for line in open(p):
+            rec = json.loads(line)
+            if rec.get("meta"):
+                continue
+            lo = int(np.searchsorted(times, rec["t_start"] + 0.15))
+            hi = int(np.searchsorted(times, rec["t_end"]))
+            for j in range(lo, hi):
+                pkt = frames[j]
+                if max(pkt.get("blinkL", 0), pkt.get("blinkR", 0)) > 0.35:
+                    continue
+                X.append(_features(pkt))
+                Y.append(rec["target"])
+                S.append(p.stem)
+    return X, Y, S
+
+
 def _load_streams():
     frames = []
     for p in sorted(ARKIT_DIR.glob("stream_*.jsonl")):
@@ -119,7 +183,7 @@ def fit(dataset_root="data/dataset"):
     from .dataset import DWELL_TAGS, load_pruned
     root = Path(dataset_root)
     pruned = load_pruned(root)
-    X, Y, S = [], [], []
+    X, Y, S = _load_calib_pairs(frames, times)  # camera-free calib windows
     for sess in sorted(root.glob("session_*")):
         jl = sess / "samples.jsonl"
         if not jl.exists():

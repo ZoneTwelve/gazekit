@@ -95,6 +95,9 @@ def main():
     ar.add_argument("--fit", action="store_true",
                     help="pair recorded streams with collection samples and "
                          "fit the ARKit->screen teacher mapping")
+    ar.add_argument("--calib", action="store_true",
+                    help="camera-free target display for teacher calibration"
+                         " (use while the iPhone is busy being the teacher)")
 
     j = sub.add_parser("journal", help="show the unified run journal")
     j.add_argument("--last", type=int, default=15)
@@ -213,9 +216,11 @@ def _dispatch(args):
                    do_update=not args.no_update, train_cnn=args.cnn)
 
     elif args.cmd == "arkit":
-        from .arkit import fit, receive
+        from .arkit import calib, fit, receive
         if args.fit:
             fit()
+        elif args.calib:
+            calib()
         else:
             receive()
 
