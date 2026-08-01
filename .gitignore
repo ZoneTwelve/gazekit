@@ -11,3 +11,5 @@ __pycache__/
 
 # research (private repo, personal-data analysis)
 research/
+ios/build/
+ios/**/xcuserdata/
