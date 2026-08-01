@@ -11,14 +11,23 @@ import cv2
 def list_cameras(max_index: int = 5) -> list[dict]:
     names = []
     if sys.platform == "darwin":
+        # AVFoundation device order is what OpenCV indexes by; the previous
+        # system_profiler listing enumerates in its own (shuffling) order, so
+        # names ended up attached to the wrong indices.
         try:
-            out = subprocess.run(
-                ["system_profiler", "SPCameraDataType", "-json"],
-                capture_output=True, text=True, timeout=15).stdout
-            names = [c.get("_name", "?") for c in
-                     json.loads(out).get("SPCameraDataType", [])]
+            import AVFoundation as AVF
+            names = [d.localizedName() for d in
+                     AVF.AVCaptureDevice.devicesWithMediaType_(
+                         AVF.AVMediaTypeVideo)]
         except Exception:
-            pass
+            try:
+                out = subprocess.run(
+                    ["system_profiler", "SPCameraDataType", "-json"],
+                    capture_output=True, text=True, timeout=15).stdout
+                names = [c.get("_name", "?") + " (name order not guaranteed)"
+                         for c in json.loads(out).get("SPCameraDataType", [])]
+            except Exception:
+                pass
     found = []
     for i in range(max_index):
         cap = cv2.VideoCapture(i)

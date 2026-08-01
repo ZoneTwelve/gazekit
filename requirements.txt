@@ -10,3 +10,5 @@ transformers==4.49.0
 timm
 einops
 pandas>=2.0
+# macOS only: camera names in the same AVFoundation order OpenCV indexes by
+pyobjc-framework-AVFoundation; sys_platform == "darwin"
