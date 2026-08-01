@@ -153,6 +153,9 @@ def _record_stream_bg(stop_event, port=PORT):
                     f.write(json.dumps(pkt) + "\n")
                     n += 1
                     stats["n"] = n
+                    stats["blink"] = max(pkt.get("blinkL", 0),
+                                         pkt.get("blinkR", 0))
+                    stats["path"] = str(out)
                     if n % 15 == 0:
                         f.flush()
                 except (socket.timeout, json.JSONDecodeError):
@@ -193,19 +196,29 @@ def calib(points=13):
     import random
     random.shuffle(pts)
     try:
-        # connection gate: refuse to show a single target until the phone
-        # stream is demonstrably alive (>20 packets/s)
+        # pre-flight gate (collection standard): stream alive at >20 pkt/s
+        # AND eyes readable (blink not stuck high) held for 1.5 s
         say("waiting for the phone stream")
+        good_since = None
         while True:
             r = rate(0.5)
+            blink = stats.get("blink", 1.0)
+            ok = r > 20 and blink < 0.4
+            now_m = time.monotonic()
+            good_since = (good_since or now_m) if ok else None
             img = win.canvas()
-            if r > 20:
+            checks = [(f"stream {r:.0f} pkt/s", r > 20),
+                      (f"eyes open (blink {blink:.2f})", blink < 0.4)]
+            y = int(sh * 0.40)
+            for text, passed in checks:
+                ui.center_text(img, ("OK  " if passed else "!!  ") + text,
+                               y, 0.8, ui.GOOD if passed else ui.BAD)
+                y += 40
+            if good_since and now_m - good_since >= 1.5:
                 break
-            ui.center_text(img, "waiting for GazeTeacher stream...",
-                           int(sh * 0.42), 1.0)
-            ui.center_text(img, f"receiving {r:.0f} packets/s — open the "
-                           "app, check the IP, tap Start", int(sh * 0.50),
-                           0.7, (150, 150, 150))
+            if not ok:
+                ui.center_text(img, "open GazeTeacher, check the IP, tap "
+                               "Start", y + 10, 0.65, (150, 150, 150))
             if win.show(img) in (27, ord("q")):
                 raise KeyboardInterrupt
         say("connected")
@@ -223,14 +236,21 @@ def calib(points=13):
                 if win.show(img) in (27, ord("q")):
                     raise KeyboardInterrupt
 
+            # collection standard stage 4: grid points train, then probe
+            # points the mapping never fit on measure honest error
+            import random as _rnd
+            probes = [( _rnd.uniform(0.15, 0.85) * sw,
+                        _rnd.uniform(0.15, 0.85) * sh) for _ in range(4)]
+            all_pts = [(p, False) for p in pts] + [(p, True) for p in probes]
             i = 0
-            while i < len(pts):
-                x, y = pts[i]
+            while i < len(all_pts):
+                (x, y), is_probe = all_pts[i]
                 t0 = time.monotonic()
                 while time.monotonic() - t0 < 0.8:   # settle, not logged
                     img = win.canvas()
-                    ui.draw_target(img, x, y, (time.monotonic() - t0) / 0.8)
-                    ui.center_text(img, f"{i + 1} / {len(pts)}", 50, 0.7,
+                    ui.draw_target(img, x, y, (time.monotonic() - t0) / 0.8,
+                                   (200, 120, 255) if is_probe else ui.ACCENT)
+                    ui.center_text(img, f"{i + 1} / {len(all_pts)}", 50, 0.7,
                                    (150, 150, 150))
                     if win.show(img) in (27, ord("q")):
                         raise KeyboardInterrupt
@@ -239,7 +259,8 @@ def calib(points=13):
                 t0 = time.monotonic()
                 while time.monotonic() - t0 < 1.3:   # dwell, logged window
                     img = win.canvas()
-                    ui.draw_target(img, x, y, 1.0)
+                    ui.draw_target(img, x, y, 1.0,
+                                   (200, 120, 255) if is_probe else ui.ACCENT)
                     if win.show(img) in (27, ord("q")):
                         raise KeyboardInterrupt
                 got = stats["n"] - n_start
@@ -256,9 +277,55 @@ def calib(points=13):
                     say("resumed")
                     continue
                 f.write(json.dumps({"t_start": t_start, "t_end": time.time(),
-                                    "target": [x, y], "frames": got}) + "\n")
+                                    "target": [x, y], "frames": got,
+                                    "probe": is_probe}) + "\n")
                 i += 1
-        print(f"done -> {out}  (now run `gazekit arkit --fit`)")
+
+        # validate: fit on grid windows, score on probe windows
+        report = {"n_points": len(pts), "n_probes": len(probes)}
+        stop.set()
+        time.sleep(1.3)   # recorder flush
+        try:
+            frames = [json.loads(l) for l in open(stats["path"])]
+            times = np.array([p["t_recv"] for p in frames])
+            Xg, Yg, Xp, Yp = [], [], [], []
+            for line in open(out):
+                rec = json.loads(line)
+                if rec.get("meta"):
+                    continue
+                lo = int(np.searchsorted(times, rec["t_start"] + 0.15))
+                hi = int(np.searchsorted(times, rec["t_end"]))
+                for j in range(lo, hi):
+                    pkt = frames[j]
+                    if max(pkt.get("blinkL", 0), pkt.get("blinkR", 0)) > 0.35:
+                        continue
+                    (Xp if rec.get("probe") else Xg).append(_features(pkt))
+                    (Yp if rec.get("probe") else Yg).append(rec["target"])
+            if len(Xg) > 100 and len(Xp) > 20:
+                from sklearn.linear_model import Ridge
+                from sklearn.pipeline import make_pipeline
+                from sklearn.preprocessing import (PolynomialFeatures,
+                                                   StandardScaler)
+                m = make_pipeline(StandardScaler(),
+                                  PolynomialFeatures(2, include_bias=False),
+                                  Ridge(alpha=10.0)).fit(np.array(Xg),
+                                                         np.array(Yg))
+                err = float(np.mean(np.linalg.norm(
+                    m.predict(np.array(Xp)) - np.array(Yp), axis=1)))
+                diag = float(np.hypot(sw, sh))
+                verdict = ("STABLE" if err / diag <= 0.045 else
+                           "USABLE" if err / diag <= 0.075 else
+                           "POOR - recalibrate")
+                report.update(probe_err_px=round(err, 1), verdict=verdict,
+                              pairs=len(Xg) + len(Xp))
+                say(f"verdict {verdict.split()[0]}")
+                print(f"validation: {err:.0f}px on {len(Xp)} held-out probe "
+                      f"samples -> {verdict}")
+        except (OSError, KeyError, ValueError) as e:
+            print(f"(validation skipped: {e})")
+        print(f"done -> {out}  (run `gazekit arkit --fit` to update the "
+              "teacher)")
+        return report
     except KeyboardInterrupt:
         print(f"\naborted -> {out}")
     finally:

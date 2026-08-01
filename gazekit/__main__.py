@@ -137,7 +137,7 @@ def main():
                      "deployed_probe_err_px", "loso_px", "loso_aligned_px",
                      "loto_px", "samples", "recommendations",
                      "per_condition_px", "mean_px", "median_px", "p90_px",
-                     "n") if k in result}
+                     "n", "probe_err_px", "pairs") if k in result}
         log_run(args.cmd, sys.argv[1:], status,
                 time.monotonic() - t0, keep)
 
@@ -222,7 +222,7 @@ def _dispatch(args):
         if args.fit:
             fit()
         elif args.calib:
-            calib()
+            return calib()
         elif args.monitor:
             monitor()
         else:
