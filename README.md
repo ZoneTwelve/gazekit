@@ -16,10 +16,12 @@ Every calibration session also records eye crops + targets into
 ## Setup
 
 ```sh
-uv pip install --python ~/.venv/bin/python -r requirements.txt
-mkdir -p models && curl -sL -o models/face_landmarker.task \
-  https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+bash setup.sh          # deps + face model + self-test (10/10 = ready)
 ```
+
+Works with just your laptop's built-in webcam. An iPhone is optional and
+unlocks a second, more accurate mode (see `ios/`). Setting up with an AI
+agent? Point it at [AGENT.md](AGENT.md).
 
 First run will ask for camera permission for your terminal
 (System Settings → Privacy & Security → Camera).
