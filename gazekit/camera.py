@@ -34,11 +34,11 @@ def list_cameras(max_index: int = 5) -> list[dict]:
     return found
 
 
-def open_camera(index) -> "cv2.VideoCapture":
+def open_camera(index, on_wait=None) -> "cv2.VideoCapture":
     if isinstance(index, str) and not index.lstrip("-").isdigit():
         if index == "phone":
             from .phonecam import PhoneCamera
-            return PhoneCamera()
+            return PhoneCamera(on_wait=on_wait)
         raise SystemExit(f"unknown camera '{index}' (use an index or 'phone')")
     index = int(index)
     cap = cv2.VideoCapture(index)

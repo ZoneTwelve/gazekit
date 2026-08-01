@@ -101,10 +101,14 @@ def environment_gate(win, cap, tracker, hold_s=2.0):
         if not obs.ok:
             checks.append(("Face not detected - center yourself in the frame", False))
         else:
-            iod = obs.interocular_px
-            checks.append(("Distance OK" if 55 <= iod <= 240 else
-                           ("Move CLOSER to the camera" if iod < 55 else
-                            "Move FARTHER from the camera"), 55 <= iod <= 240))
+            # distance judged as a FRACTION of frame width, so the gate
+            # behaves the same on a 640px phone stream and a 1280px webcam
+            # (absolute pixels made the phone demand an absurd distance)
+            iod = obs.interocular_px / max(frame.shape[1], 1)
+            lo, hi = 0.043, 0.30
+            checks.append(("Distance OK" if lo <= iod <= hi else
+                           ("Move CLOSER to the camera" if iod < lo else
+                            "Move FARTHER from the camera"), lo <= iod <= hi))
             bright_ok = 60 <= obs.brightness <= 215
             checks.append(("Lighting OK" if bright_ok else
                            "Fix lighting (light your face, avoid strong backlight)",
@@ -248,7 +252,18 @@ def run(camera_index=0, points=16, rounds=2, model_out="data/gaze_model.pkl",
     diag = float(np.hypot(sw, sh))
 
     win = ui.FullscreenWindow("gazekit", (sw, sh))
-    cap = open_camera(camera_index)
+    # a network camera can take a while; keep the window painted (macOS
+    # only draws while the event loop is pumped) and say what's happening
+    def waiting(elapsed):
+        img = win.canvas()
+        ui.center_text(img, "connecting to the camera...", int(sh * 0.44), 1.0)
+        ui.center_text(img, f"{elapsed:.0f}s — phone: keep GazeTeacher in "
+                       "the FOREGROUND, unlocked", int(sh * 0.51), 0.7,
+                       (150, 150, 150))
+        win.show(img)
+
+    waiting(0)
+    cap = open_camera(camera_index, on_wait=waiting)
     tracker = FaceTracker(landmarker)
     writer = DatasetWriter(dataset_root, (sw, sh))
     report = {"screen": [sw, sh], "points": points, "rounds": rounds}

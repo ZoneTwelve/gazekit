@@ -112,13 +112,20 @@ ROTATIONS = [None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE,
 
 class PhoneCamera:
     def __init__(self, frame_port=FRAME_PORT, gaze_port=GAZE_PORT,
-                 wait_s=60, landmarker="models/face_landmarker.task"):
+                 wait_s=None, landmarker="models/face_landmarker.task",
+                 on_wait=None):
+        """on_wait(elapsed_s) is called ~5x/s while waiting for the phone —
+        callers with a window MUST pass it, otherwise their UI freezes
+        unpainted (macOS only paints while the event loop is pumped)."""
+        import os
+        wait_s = wait_s or float(os.environ.get("GAZEKIT_PHONE_WAIT", 60))
         self._frame = None
         self._fresh = threading.Event()
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._rotation = None
         self._conn = None
+        self._gaze_n = 0
         self.gaze_path = None
 
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -135,11 +142,23 @@ class PhoneCamera:
                          daemon=True).start()
 
         print(f"waiting for GazeTeacher frames on tcp:{frame_port} "
-              "(open the app, enter this Mac's IP, tap Start)...")
-        if not self._fresh.wait(wait_s):
-            self.release()
-            raise SystemExit("no frames from the phone — check the app is "
-                             "streaming and the IP is this Mac's LAN address")
+              "(app auto-reconnects; keep it in the foreground)...",
+              flush=True)
+        t0 = time.time()
+        while not self._fresh.wait(0.2):
+            elapsed = time.time() - t0
+            if on_wait is not None:
+                on_wait(elapsed)
+            if int(elapsed) % 5 == 0 and elapsed - int(elapsed) < 0.2:
+                print(f"  ...{elapsed:.0f}s  tcp-connected="
+                      f"{self._conn is not None}  gaze="
+                      f"{self._gaze_n}", flush=True)
+            if elapsed > wait_s:
+                self.release()
+                raise SystemExit(
+                    "no frames from the phone. Checks: app in the "
+                    "FOREGROUND (ARKit stops in background), phone not "
+                    "locked, link line shows 'connected'.")
         self._auto_orient(landmarker)
 
     # --- network loops -------------------------------------------------
@@ -213,6 +232,7 @@ class PhoneCamera:
                     pkt["t_recv"] = time.time()
                     f.write(json.dumps(pkt) + "\n")
                     n += 1
+                    self._gaze_n = n
                     if n % 15 == 0:   # keep the file tailable (monitor/fit)
                         f.flush()
                 except (socket.timeout, json.JSONDecodeError):

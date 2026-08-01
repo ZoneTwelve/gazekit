@@ -64,21 +64,50 @@ final class FaceStreamer: NSObject, ObservableObject, ARSessionDelegate {
             case .ready:
                 DispatchQueue.main.async { self.linkState = "connected" }
                 self.receiveLoop(c)
-            case .failed, .cancelled:
+            case .failed(let err):
                 DispatchQueue.main.async {
-                    self.linkState = "retrying… (\(self.host))"
+                    self.linkState = "retry: \(Self.explain(err))"
                 }
                 self.net.asyncAfter(deadline: .now() + 2) {
                     if self.ctrl === c || self.ctrl == nil {
                         self.connectControl()
                     }
                 }
-            case .waiting:
-                DispatchQueue.main.async { self.linkState = "waiting… " }
+            case .waiting(let err):
+                // .waiting means "no viable path YET" — for a refused port
+                // it never resolves on its own, so treat it exactly like a
+                // failure: cancel and retry. (This is why the phone showed
+                // "waiting" forever while its UDP gaze stream worked fine.)
+                DispatchQueue.main.async {
+                    self.linkState = "retry: \(Self.explain(err))"
+                }
+                c.cancel()
+                self.net.asyncAfter(deadline: .now() + 2) {
+                    if self.ctrl === c || self.ctrl == nil {
+                        self.connectControl()
+                    }
+                }
             default: break
             }
         }
         c.start(queue: net)
+    }
+
+    /// Human-readable cause for the on-screen link state.
+    static func explain(_ err: NWError) -> String {
+        switch err {
+        case .posix(let code):
+            switch code {
+            case .EPERM: return "local network permission denied"
+            case .EHOSTUNREACH, .ENETUNREACH:
+                return "Mac unreachable — same Wi-Fi?"
+            case .ECONNREFUSED: return "no listener on the Mac"
+            case .ETIMEDOUT: return "timed out"
+            default: return "posix \(code.rawValue)"
+            }
+        case .dns(let c): return "dns \(c)"
+        default: return "\(err)"
+        }
     }
 
     // MARK: control messages from the Mac
