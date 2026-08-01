@@ -31,9 +31,9 @@ PY=~/.venv/bin/python
 
 $PY -m gazekit auto               # << start here: guided end-to-end —
                                   #    collects whatever is missing, trains,
-                                  #    evaluates, then keeps adapting in
-                                  #    ambient mode. Steps + timings logged
-                                  #    to data/auto_log.jsonl
+                                  #    evaluates, auto-labels, then ENDS.
+                                  #    add --ambient to keep adapting while
+                                  #    you work. Log: data/auto_log.jsonl
 $PY -m gazekit cameras            # list cameras (iPhone appears here too)
 $PY -m gazekit doctor             # check lighting / distance / pose
 $PY -m gazekit calibrate          # full training process (~90 s)

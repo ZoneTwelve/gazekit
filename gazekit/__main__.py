@@ -19,8 +19,9 @@ def main():
     au.add_argument("--cnn", action="store_true",
                     help="force CNN training")
     au.add_argument("--no-cnn", action="store_true")
-    au.add_argument("--no-ambient", action="store_true",
-                    help="don't start ambient mode at the end")
+    au.add_argument("--ambient", action="store_true",
+                    help="after the pipeline finishes, keep adapting in "
+                         "ambient mode (endless; Ctrl+C to stop)")
 
     d = sub.add_parser("doctor", help="run the environment check only")
     d.add_argument("--camera", type=int, default=0)
@@ -93,7 +94,7 @@ def main():
         from .auto import run
         run(camera_index=args.camera, full=args.full,
             cnn="yes" if args.cnn else "no" if args.no_cnn else "auto",
-            ambient_after=not args.no_ambient)
+            ambient_after=args.ambient)
 
     elif args.cmd == "cameras":
         from .camera import list_cameras

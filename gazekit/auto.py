@@ -80,7 +80,7 @@ def build_plan(full=False):
     return plan, n_samples
 
 
-def run(camera_index=0, full=False, cnn="auto", ambient_after=True):
+def run(camera_index=0, full=False, cnn="auto", ambient_after=False):
     log = AutoLog()
     plan, n_samples = build_plan(full)
     log.event("plan", "start", steps=[s for s, _ in plan],
@@ -168,6 +168,9 @@ def run(camera_index=0, full=False, cnn="auto", ambient_after=True):
         if report and report.get("loso_px"):
             print(f"\npipeline complete — cross-session error "
                   f"{report['loso_px']}px on {report['samples']} samples")
+        if not ambient_after:
+            print("done. (add --ambient to keep adapting in the background "
+                  "while you work)")
 
         if ambient_after:
             say("Ambient mode is now watching. Dots will appear while "
