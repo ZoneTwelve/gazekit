@@ -77,6 +77,10 @@ def main():
     it.add_argument("--cnn", action="store_true",
                     help="also train the CNN on the cleaned dataset")
 
+    sub.add_parser("metrics",
+                   help="self-diagnose the error computation (synthetic "
+                        "ground truth, baselines, axis-swap, saturation)")
+
     an = sub.add_parser("annotate",
                         help="Florence-2 environment labels for session "
                              "snapshots (offline; downloads ~0.5GB on first "
@@ -236,6 +240,10 @@ def _dispatch(args):
         from .evaluate import run
         return run(do_clean=not args.no_clean,
                    do_update=not args.no_update, train_cnn=args.cnn)
+
+    elif args.cmd == "metrics":
+        from .metrics import run
+        return run()
 
     elif args.cmd == "arkit":
         from .arkit import calib, fit, monitor, receive
