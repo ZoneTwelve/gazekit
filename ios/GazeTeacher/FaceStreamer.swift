@@ -39,6 +39,9 @@ final class FaceStreamer: NSObject, ObservableObject, ARSessionDelegate {
         self.host = host
         guard !armed else { return }
         armed = true
+        // stay awake while armed — a locked phone is a suspended app, and
+        // a suspended app can't be the "active side" of anything
+        UIApplication.shared.isIdleTimerDisabled = true
         gazeConn = NWConnection(host: .init(host), port: 5577, using: .udp)
         gazeConn?.start(queue: net)
         connectControl()
