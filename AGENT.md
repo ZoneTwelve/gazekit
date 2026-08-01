@@ -22,6 +22,24 @@ uv pip install -r requirements.txt \
   && python -m gazekit selftest
 ```
 
+## Optional: pretrained models from Hugging Face
+
+Public model repo: **https://huggingface.co/ZoneTwelve/gazekit**
+
+```sh
+python -c "
+from huggingface_hub import hf_hub_download; import shutil
+for f in ('gaze_model.pkl', 'gaze_cnn.pt'):
+    shutil.copy(hf_hub_download('ZoneTwelve/gazekit', f), 'data/' + f)
+print('downloaded to data/')"
+```
+
+These weights are **personalized to the author's face, camera and screen**
+— they are a reference artifact, not a working tracker for someone else.
+Every user must run `gazekit auto` to build their own. Skip this download
+unless you are inspecting or comparing architectures. The training dataset
+is not public.
+
 ## What the user does next
 
 ```sh

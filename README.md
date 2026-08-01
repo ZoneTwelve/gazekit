@@ -26,6 +26,22 @@ agent? Point it at [AGENT.md](AGENT.md).
 First run will ask for camera permission for your terminal
 (System Settings → Privacy & Security → Camera).
 
+### Pretrained models (optional)
+
+Reference weights live at
+[huggingface.co/ZoneTwelve/gazekit](https://huggingface.co/ZoneTwelve/gazekit):
+
+```sh
+python -c "
+from huggingface_hub import hf_hub_download; import shutil
+for f in ('gaze_model.pkl', 'gaze_cnn.pt'):
+    shutil.copy(hf_hub_download('ZoneTwelve/gazekit', f), 'data/' + f)"
+```
+
+They are personalized to one face, camera and screen, so they will *not*
+track your eyes well — run `gazekit auto` to train your own. Download them
+only to inspect or benchmark the architecture.
+
 ## Usage
 
 ```sh

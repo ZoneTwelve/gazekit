@@ -19,6 +19,10 @@ import numpy as np
 CHECKS = []
 
 
+class Skip(Exception):
+    """Raised by a check that can't run in this environment."""
+
+
 def check(name):
     def deco(fn):
         CHECKS.append((name, fn))
@@ -136,6 +140,14 @@ def _gate():
 def _phone():
     import cv2
     from gazekit.phonecam import PhoneCamera
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind(("0.0.0.0", 5578))
+    except OSError:
+        raise Skip("port 5578 in use by a running camera session")
+    finally:
+        probe.close()
     img = (np.random.rand(360, 640, 3) * 255).astype(np.uint8)
     _, jpg = cv2.imencode(".jpg", img)
     payload = json.dumps({"type": "frame", "t": 0,
@@ -203,15 +215,22 @@ def _journal():
 
 def run():
     print("gazekit selftest — automated release checks\n")
-    failed = 0
+    failed = skipped = 0
     for name, fn in CHECKS:
         try:
             detail = fn()
             print(f"  PASS  {name}  ({detail})")
-        except Exception as e:
+        except Skip as e:
+            skipped += 1
+            print(f"  SKIP  {name}: {e}")
+        # SystemExit is how the camera layer reports env problems and it
+        # would otherwise abort the whole suite
+        except (Exception, SystemExit) as e:
             failed += 1
             print(f"  FAIL  {name}: {type(e).__name__}: {e}")
-    print(f"\n{len(CHECKS) - failed}/{len(CHECKS)} passed")
+    passed = len(CHECKS) - failed - skipped
+    print(f"\n{passed}/{len(CHECKS)} passed"
+          + (f", {skipped} skipped" if skipped else ""))
     if failed:
         raise SystemExit(1)
     print("automated checks green — walk docs/RELEASE_CHECKLIST.md manual "
