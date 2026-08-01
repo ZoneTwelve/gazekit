@@ -259,6 +259,17 @@ def run(camera_index=0, points=16, rounds=2, model_out="data/gaze_model.pkl",
         if frame is not None:
             writer.save_context(frame)
 
+        # blink break: refresh the tear film before sampling — dry eyes
+        # drift the iris geometry and poison the whole session's labels
+        from .ui import say
+        say("blink a few times")
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 2.5:
+            img = win.canvas()
+            ui.center_text(img, "eyes dry? blink a few times now",
+                           int(sh * 0.45), 1.0)
+            _tick(win, img)
+
         grid = grid_points(sw, sh, points)
         Xs, Ys = [], []
         for r in range(rounds):

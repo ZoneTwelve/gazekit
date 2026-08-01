@@ -194,6 +194,11 @@ def run(camera_index=0, backend="ridge", model_path=None,
     last_xy = (sw / 2, sh / 2)
     flash_until = 0.0
     ax, bx, ay, by = (1.0, 0.0, 1.0, 0.0)
+    # camera-move detector: pose/translation baseline captured at align
+    # time; a sustained deviation means the camera (or you) moved enough
+    # that the alignment is stale -> auto re-align
+    cam_base = None
+    cam_dev_since = None
 
     try:
         if align:
@@ -217,6 +222,21 @@ def run(camera_index=0, backend="ridge", model_path=None,
                     px = min(max(ax * float(p[0]) + bx, 0.0), sw - 1.0)
                     py = min(max(ay * float(p[1]) + by, 0.0), sh - 1.0)
                     last_xy = smoother.apply(px, py, now)
+                v = np.asarray(obs.features[8:14], dtype=float)
+                if cam_base is None:
+                    cam_base = v.copy()
+                elif np.linalg.norm(v - cam_base) > 0.35:
+                    cam_dev_since = cam_dev_since or now
+                    if now - cam_dev_since > 2.0 and align:
+                        from .ui import say
+                        say("camera moved, look at the rings")
+                        ax, bx, ay, by = _quick_align(win, cap, tracker,
+                                                      predict)
+                        cam_base = None
+                        cam_dev_since = None
+                else:
+                    cam_dev_since = None
+                    cam_base = 0.98 * cam_base + 0.02 * v
             ui.draw_gaze_dot(img, *last_xy, frozen=frozen)
 
             # -- click-to-teach ------------------------------------------

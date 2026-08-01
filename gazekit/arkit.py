@@ -125,16 +125,56 @@ def monitor():
         cv2.destroyAllWindows()
 
 
+def _record_stream_bg(stop_event, port=PORT):
+    """In-process ARKit stream recorder (background thread)."""
+    import threading
+
+    def loop():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind(("0.0.0.0", port))
+        except OSError:
+            print(f"(gaze port {port} busy — assuming another recorder runs)")
+            return
+        sock.settimeout(1.0)
+        ARKIT_DIR.mkdir(parents=True, exist_ok=True)
+        out = ARKIT_DIR / f"stream_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
+        n = 0
+        with open(out, "w") as f:
+            while not stop_event.is_set():
+                try:
+                    data, _ = sock.recvfrom(4096)
+                    pkt = json.loads(data)
+                    pkt["t_recv"] = time.time()
+                    f.write(json.dumps(pkt) + "\n")
+                    n += 1
+                    if n % 15 == 0:
+                        f.flush()
+                except (socket.timeout, json.JSONDecodeError):
+                    continue
+        sock.close()
+        print(f"stream: {n} gaze frames -> {out}")
+
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    return t
+
+
 def calib(points=13):
     """Camera-free calibration for the ARKit teacher: the screen shows
     targets and logs (t_start, t_end, target); the phone's stream provides
-    the eyes. Works while GazeTeacher holds the iPhone camera — i.e. when
-    Continuity Camera (the Mac's only webcam) is unavailable."""
+    the eyes — and is RECORDED IN-PROCESS, so this one command is
+    self-sufficient. Works while GazeTeacher holds the iPhone camera."""
+    import threading
     import cv2
     from . import ui
     from .calibrate import grid_points
     from .screen import screen_size
+    from .ui import say
     sw, sh = screen_size()
+    stop = threading.Event()
+    _record_stream_bg(stop)
     win = ui.FullscreenWindow("gazekit-arkit-calib", (sw, sh))
     ARKIT_DIR.mkdir(parents=True, exist_ok=True)
     out = ARKIT_DIR / f"calib_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
@@ -144,6 +184,16 @@ def calib(points=13):
     try:
         with open(out, "w") as f:
             f.write(json.dumps({"meta": True, "screen_size": [sw, sh]}) + "\n")
+            # blink break: a fresh tear film before sampling — dry eyes
+            # drift the iris fit and quietly poison the whole session
+            say("blink a few times, then look at the dots")
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < 2.5:
+                img = win.canvas()
+                ui.center_text(img, "eyes dry? blink a few times now",
+                               int(sh * 0.45), 1.0)
+                if win.show(img) in (27, ord("q")):
+                    raise KeyboardInterrupt
             for i, (x, y) in enumerate(pts):
                 t0 = time.monotonic()
                 while time.monotonic() - t0 < 0.8:   # settle, not logged
@@ -166,6 +216,8 @@ def calib(points=13):
     except KeyboardInterrupt:
         print(f"\naborted -> {out}")
     finally:
+        stop.set()
+        time.sleep(1.2)   # let the recorder flush and report
         cv2.destroyAllWindows()
 
 

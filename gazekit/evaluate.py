@@ -199,8 +199,47 @@ def _weights(recs):
         * RECENCY_DECAY ** age[r["session"]] for r in recs])
 
 
+def split_epochs(recs, jump=0.30, min_run=40):
+    """Split sessions into camera-pose epochs. A deliberate camera move
+    shows as a sustained jump in the head pose/translation baseline
+    (features 8:14 are relative to the camera). Each epoch then gets its
+    own affine in calibration-aware training and its own alignment unit,
+    so intentionally moving the camera enriches the data instead of
+    poisoning the mapping. Labels were never at risk — targets are ground
+    truth regardless of where the camera sits."""
+    out = []
+    by_sess = {}
+    for r in recs:
+        by_sess.setdefault(r["session"], []).append(r)
+    for sess, rs in by_sess.items():
+        rs.sort(key=lambda r: r["i"])
+        base = None
+        epoch, run = 0, 0
+        for r in rs:
+            v = np.asarray(r["X"][8:14], dtype=float)
+            if base is None:
+                base = v.copy()
+            if np.linalg.norm(v - base) > jump:
+                run += 1
+                if run >= min_run:      # sustained -> the camera moved
+                    epoch += 1
+                    base = v.copy()
+                    run = 0
+            else:
+                run = 0
+                base = 0.98 * base + 0.02 * v
+            r = dict(r)
+            r["session"] = f"{sess}" if epoch == 0 else f"{sess}#e{epoch}"
+            out.append(r)
+    n_ep = len({r["session"] for r in out}) - len(by_sess)
+    if n_ep:
+        print(f"  camera-pose epochs: {n_ep} split(s) detected")
+    return out
+
+
 def evaluate(recs, screen):
     """LOSO + leave-target-out metrics on cleaned records."""
+    recs = split_epochs(recs)
     sessions = sorted({r["session"] for r in recs})
     report = {"sessions": len(sessions), "samples": len(recs)}
 
