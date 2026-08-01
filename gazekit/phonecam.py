@@ -54,6 +54,37 @@ def default_camera():
         return "0"
 
 
+def choose_camera(remember=True):
+    """Interactive source picker used when no --camera is given. Falls back
+    to the configured default when stdin isn't a terminal (background runs,
+    scripts) so automation never blocks."""
+    import sys
+    saved = default_camera()
+    if not sys.stdin.isatty():
+        return saved
+    from .camera import list_cameras
+    cams = list_cameras(max_index=3)
+    print("camera source:")
+    opts = []
+    for c in cams:
+        opts.append(str(c["index"]))
+        print(f"  {len(opts)}. camera {c['index']} — {c['name']} "
+              f"({c['resolution']})")
+    opts.append("phone")
+    print(f"  {len(opts)}. app — iPhone GazeTeacher (streams frames + ARKit)")
+    default_idx = (opts.index(saved) + 1) if saved in opts else 1
+    try:
+        raw = input(f"choose [1-{len(opts)}, enter = {default_idx}]: ").strip()
+    except EOFError:
+        return saved
+    pick = opts[int(raw) - 1] if raw.isdigit() and 1 <= int(raw) <= len(opts) \
+        else opts[default_idx - 1]
+    if remember and pick != saved:
+        CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG.write_text(json.dumps({"camera": pick}))
+    return pick
+
+
 def phone_control(action, wait_s=30):
     """`gazekit camera <action>` — detection & remote control per
     docs/PHONE_PROTOCOL.md. The phone auto-reconnects, so we just listen

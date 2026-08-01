@@ -123,8 +123,8 @@ def main():
     # default camera source comes from `gazekit camera app|cam` config;
     # an explicit --camera always wins
     if getattr(args, "camera", "absent") is None:
-        from .phonecam import default_camera
-        args.camera = default_camera()
+        from .phonecam import choose_camera
+        args.camera = choose_camera()
 
     if args.cmd == "journal":
         from .journal import summary
