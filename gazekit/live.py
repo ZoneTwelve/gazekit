@@ -291,12 +291,15 @@ def run(camera_index=0, backend="ridge", model_path=None,
             if key == ord("a"):
                 ax, bx, ay, by = _quick_align(win, cap, tracker, predict)
     finally:
+        # NEVER overwrite the deployed model here — a handful of clicks
+        # once wrote a 1190px model over a good one. Clicks are saved to
+        # the dataset (tag "click"); `iterate` folds them in behind the
+        # deploy gate. In-session refits stay in memory only.
         if ridge is not None and click_Y:
-            ridge.save("data/gaze_model.pkl",
-                       {"refit_from": "live-clicks",
-                        "clicks": len(click_Y) // CLICK_WEIGHT})
-            print(f"saved model updated with {len(click_Y) // CLICK_WEIGHT} "
-                  "click samples")
+            n = len(click_Y) // CLICK_WEIGHT
+            print(f"{n} click sample(s) saved to the dataset — run "
+                  "`gazekit iterate` to fold them in (deployed model "
+                  "untouched)")
         n = writer.close()
         if n:
             print(f"dataset: {n} click samples appended under {writer.dir}")

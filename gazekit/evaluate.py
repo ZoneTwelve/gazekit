@@ -421,6 +421,17 @@ def run(dataset_root="data/dataset", model_out="data/gaze_model.pkl",
                 deployed = GazeModel.load(model_out)
                 depl_err = (_aligned_err(deployed, test, *screen)
                             or float("inf"))
+                # sanity: alignment can rescue a badly-scaled model, so an
+                # incumbent whose RAW error is wildly worse is corrupt and
+                # forfeits (a 6-click live refit once defended itself here)
+                raw_d = float(np.mean([c["err"]
+                                       for c in _cluster_err(deployed, test)]))
+                raw_c = float(np.mean([c["err"]
+                                       for c in _cluster_err(cand, test)]))
+                if raw_d > 3 * raw_c:
+                    print(f"  deployed model looks corrupt (raw {raw_d:.0f}px "
+                          f"vs candidate {raw_c:.0f}px) — forfeits")
+                    depl_err = float("inf")
             except Exception:
                 # includes feature-dimension mismatch after a transform
                 # upgrade — the old pickle can't score the new features
