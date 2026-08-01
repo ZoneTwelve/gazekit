@@ -1,7 +1,7 @@
 // GazeTeacher — the iPhone as gazekit's camera AND gaze teacher.
-// Streams ARKit gaze (UDP :5577) + camera frames (TCP :5578) to the Mac,
-// with an on-device preview (ARKit owns the camera exclusively, so this
-// preview is the only way to see what it sees).
+// The phone is the ACTIVE side: it arms itself on launch, reconnects
+// forever, and the Mac remote-controls the session (see gazekit
+// docs/PHONE_PROTOCOL.md). Manual Start/Stop remains as an override.
 
 import SwiftUI
 
@@ -23,22 +23,26 @@ struct ContentView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.black.opacity(0.85))
-                if let img = tracker.preview {
+                if let img = tracker.preview, tracker.running {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFit()
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                 } else {
                     Text(tracker.running ? "waiting for camera…"
-                                         : "preview appears after Start")
+                         : "idle — the Mac can start me remotely")
                         .foregroundColor(.gray).font(.footnote)
                 }
                 VStack {
                     HStack {
                         Circle()
-                            .fill(tracker.faceTracked ? .green : .red)
+                            .fill(tracker.running
+                                  ? (tracker.faceTracked ? .green : .orange)
+                                  : .gray)
                             .frame(width: 10, height: 10)
-                        Text(tracker.faceTracked ? "tracking" : "no face")
+                        Text(tracker.running
+                             ? (tracker.faceTracked ? "tracking" : "no face")
+                             : "session off")
                             .font(.caption2).foregroundColor(.white)
                         Spacer()
                     }.padding(8)
@@ -50,13 +54,14 @@ struct ContentView: View {
             TextField("Mac IP", text: $host)
                 .textFieldStyle(.roundedBorder)
                 .keyboardType(.decimalPad)
+                .onSubmit { tracker.rearm(host: host) }
             Button(tracker.running ? "Stop" : "Start") {
-                tracker.running ? tracker.stop()
-                                : tracker.start(host: host)
+                tracker.running ? tracker.stopSession()
+                                : tracker.startSession()
             }
             .buttonStyle(.borderedProminent)
 
-            Text(tracker.status).font(.footnote).monospaced()
+            Text("link: \(tracker.linkState)").font(.footnote).monospaced()
             HStack(spacing: 16) {
                 Text("gaze \(tracker.gazeSent)")
                 Text("frames \(tracker.framesSent)")
@@ -67,5 +72,6 @@ struct ContentView: View {
             .foregroundColor(.secondary)
         }
         .padding()
+        .onAppear { tracker.arm(host: host) }
     }
 }

@@ -13,7 +13,7 @@ def main():
     au = sub.add_parser("auto",
                         help="guided end-to-end: collect everything missing, "
                              "train, evaluate, then adapt in ambient mode")
-    au.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
+    au.add_argument("--camera", default=None, help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     au.add_argument("--full", action="store_true",
                     help="run every collection step even if data exists")
     au.add_argument("--cnn", action="store_true",
@@ -24,10 +24,10 @@ def main():
                          "ambient mode (endless; Ctrl+C to stop)")
 
     d = sub.add_parser("doctor", help="run the environment check only")
-    d.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
+    d.add_argument("--camera", default=None, help="camera index, or 'phone' for the GazeTeacher iPhone stream")
 
     c = sub.add_parser("calibrate", help="run the full training process")
-    c.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
+    c.add_argument("--camera", default=None, help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     c.add_argument("--points", type=int, default=16, choices=(9, 13, 16),
                    help="grid size (16 = 4x4, recommended)")
     c.add_argument("--rounds", type=int, default=2,
@@ -38,10 +38,10 @@ def main():
     co.add_argument("scenario",
                     choices=("pursuit", "edges", "posture", "vor", "blinks",
                              "daily"))
-    co.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
+    co.add_argument("--camera", default=None, help="camera index, or 'phone' for the GazeTeacher iPhone stream")
 
     l = sub.add_parser("live", help="show the live gaze dot")
-    l.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
+    l.add_argument("--camera", default=None, help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     l.add_argument("--backend",
                    choices=("ridge", "cnn", "hybrid", "eyeball"),
                    default="ridge")
@@ -51,7 +51,7 @@ def main():
 
     a = sub.add_parser("ambient",
                        help="background trainer: popup dots while you work")
-    a.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
+    a.add_argument("--camera", default=None, help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     a.add_argument("--min-wait", type=float, default=15.0,
                    help="seconds between popups, lower bound")
     a.add_argument("--max-wait", type=float, default=45.0,
@@ -63,7 +63,7 @@ def main():
 
     v = sub.add_parser("verify",
                        help="mouse-as-ground-truth error measurement")
-    v.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
+    v.add_argument("--camera", default=None, help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     v.add_argument("--mode", choices=("free", "path"), default="free",
                    help="free = roam anywhere; path = follow a wide track")
     v.add_argument("--teach", action="store_true",
@@ -104,7 +104,23 @@ def main():
     j = sub.add_parser("journal", help="show the unified run journal")
     j.add_argument("--last", type=int, default=15)
 
+    cm = sub.add_parser("camera",
+                        help="camera source config + phone remote control "
+                             "(docs/PHONE_PROTOCOL.md)")
+    cm.add_argument("action",
+                    choices=("app", "cam", "status", "start", "stop",
+                             "on", "off"),
+                    help="app/cam: set default source; status: detect the "
+                         "phone; start/stop: remote ARKit session; on/off: "
+                         "pause frames only")
+
     args = p.parse_args()
+
+    # default camera source comes from `gazekit camera app|cam` config;
+    # an explicit --camera always wins
+    if getattr(args, "camera", "absent") is None:
+        from .phonecam import default_camera
+        args.camera = default_camera()
 
     if args.cmd == "journal":
         from .journal import summary
@@ -227,6 +243,10 @@ def _dispatch(args):
             monitor()
         else:
             receive()
+
+    elif args.cmd == "camera":
+        from .phonecam import phone_control
+        phone_control(args.action)
 
     elif args.cmd == "annotate":
         from .annotate import run

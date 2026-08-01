@@ -17,13 +17,95 @@ import socket
 import struct
 import threading
 import time
-from pathlib import Path
+from pathlib import Path  # noqa: F401  (CONFIG below)
 
 import cv2
 import numpy as np
 
 FRAME_PORT = 5578
 GAZE_PORT = 5577
+CONFIG = Path("data/config.json")
+
+
+def default_camera():
+    """Configured default source ('phone' or an index string)."""
+    try:
+        return json.loads(CONFIG.read_text()).get("camera", "0")
+    except (OSError, json.JSONDecodeError):
+        return "0"
+
+
+def phone_control(action, wait_s=30):
+    """`gazekit camera <action>` — detection & remote control per
+    docs/PHONE_PROTOCOL.md. The phone auto-reconnects, so we just listen
+    on :5578 and it comes to us."""
+    if action in ("app", "cam"):
+        CONFIG.parent.mkdir(parents=True, exist_ok=True)
+        CONFIG.write_text(json.dumps(
+            {"camera": "phone" if action == "app" else "0"}))
+        print(f"default camera -> "
+              f"{'phone (GazeTeacher)' if action == 'app' else 'webcam 0'}")
+        return
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        srv.bind(("0.0.0.0", FRAME_PORT))
+    except OSError:
+        raise SystemExit(f"port {FRAME_PORT} busy — a `--camera phone` "
+                         "process owns the phone right now; control it "
+                         "from there")
+    srv.listen(1)
+    srv.settimeout(wait_s)
+    from .arkit import _local_ip
+    print(f"waiting for the phone (app should point at {_local_ip()}, "
+          f"auto-reconnects every 2s)...")
+    try:
+        conn, addr = srv.accept()
+    except socket.timeout:
+        raise SystemExit("phone never connected — is GazeTeacher open and "
+                         "pointed at this Mac's IP?")
+    print(f"phone connected from {addr[0]}")
+
+    def send(cmd):
+        body = json.dumps({"cmd": cmd}).encode()
+        conn.sendall(struct.pack(">I", len(body)) + body)
+
+    if action == "status":
+        send("session_start")
+        gsock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        gsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        gaze_n = 0
+        try:
+            gsock.bind(("0.0.0.0", GAZE_PORT))
+            gsock.settimeout(0.1)
+        except OSError:
+            gsock = None
+        conn.settimeout(0.1)
+        frames = 0
+        t0 = time.time()
+        while time.time() - t0 < 3.0:
+            try:
+                if conn.recv(65536):
+                    frames += 1   # rough: chunks, not exact frames
+            except socket.timeout:
+                pass
+            if gsock:
+                try:
+                    gsock.recvfrom(4096)
+                    gaze_n += 1
+                except socket.timeout:
+                    pass
+        print(f"status: connected; ~{frames / 3:.0f} frame-chunks/s, "
+              f"{gaze_n / 3:.0f} gaze pkt/s over 3s")
+    else:
+        cmd = {"start": "session_start", "stop": "session_stop",
+               "on": "stream_on", "off": "stream_off"}[action]
+        send(cmd)
+        print(f"sent {cmd}")
+        time.sleep(0.3)
+    conn.close()
+    srv.close()
 ROTATIONS = [None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE,
              cv2.ROTATE_180]
 
@@ -36,6 +118,7 @@ class PhoneCamera:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._rotation = None
+        self._conn = None
         self.gaze_path = None
 
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -68,8 +151,11 @@ class PhoneCamera:
                 try:
                     conn, addr = self._srv.accept()
                     conn.settimeout(2.0)
+                    self._conn = conn
                     print(f"phone connected from {addr[0]}")
                     buf = b""
+                    # the phone is armed but idle until told — drive it
+                    self.send_cmd("session_start")
                 except socket.timeout:
                     continue
             try:
@@ -185,7 +271,20 @@ class PhoneCamera:
     def set(self, *a):
         return True
 
+    def send_cmd(self, cmd: str):
+        """Length-prefixed control message to the phone (PHONE_PROTOCOL)."""
+        conn = self._conn
+        if conn is None:
+            return False
+        try:
+            body = json.dumps({"cmd": cmd}).encode()
+            conn.sendall(struct.pack(">I", len(body)) + body)
+            return True
+        except OSError:
+            return False
+
     def release(self):
+        self.send_cmd("session_stop")
         self._stop.set()
         try:
             self._srv.close()

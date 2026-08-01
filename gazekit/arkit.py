@@ -369,14 +369,20 @@ def _load_streams():
 
 
 def _features(pkt):
-    """ARKit gaze geometry -> feature vector for the screen mapping."""
-    look = np.array(pkt["look"], dtype=float)
+    """ARKit gaze geometry -> feature vector for the screen mapping.
+
+    lookAtPoint stays in FACE space — it is invariant to where the phone
+    sits (moving the phone between sessions exploded a camera-space
+    variant to 150k px LOSO). Head orientation/position in camera space
+    still enter as compensation terms; cross-phone-pose transfer is then
+    handled by the per-session anchor affine, exactly like live
+    quick-align."""
+    look = np.array(pkt["look"], dtype=float)          # face space
     face = np.array(pkt["face"], dtype=float).reshape(4, 4, order="F")
     R, t = face[:3, :3], face[:3, 3]
-    look_world = R @ look + t          # lookAtPoint into camera/world space
     fwd = R @ np.array([0.0, 0.0, 1.0])
-    return np.concatenate([look_world, fwd, t, [pkt.get("blinkL", 0),
-                                                pkt.get("blinkR", 0)]])
+    return np.concatenate([look, fwd, t, [pkt.get("blinkL", 0),
+                                          pkt.get("blinkR", 0)]])
 
 
 def fit(dataset_root="data/dataset"):
@@ -430,15 +436,38 @@ def fit(dataset_root="data/dataset"):
     def n_targets(s):
         return len({tuple(y) for y in Y[S == s]})
     sessions = sorted(set(S))
-    judges = [s for s in sessions if n_targets(s) >= 4]
+    judges = [s for s in sessions if n_targets(s) >= 6]
     if len(sessions) >= 2 and judges:
         errs = []
         for s in judges:
             m = make().fit(X[S != s], Y[S != s])
-            e = np.linalg.norm(m.predict(X[S == s]) - Y[S == s], axis=1)
+            # aligned protocol: the phone may have moved between sessions,
+            # so 3 anchor targets fit a per-axis affine (the teacher's
+            # quick-align); error measured on the remaining targets
+            tgts = sorted({tuple(y) for y in Y[S == s]})
+            anchors = tgts[:: max(len(tgts) // 3, 1)][:3]
+            P_med, T_med = [], []
+            for t_ in tgts:
+                mask = (S == s) & (Y == t_).all(axis=1)
+                P_med.append(np.median(m.predict(X[mask]), axis=0))
+                T_med.append(t_)
+            P_med, T_med = np.array(P_med), np.array(T_med, dtype=float)
+            a_idx = [tgts.index(a) for a in anchors]
+            coef = []
+            for ax in (0, 1):
+                Pa, Ta = P_med[a_idx, ax], T_med[a_idx, ax]
+                var = Pa.var()
+                aa = (float(np.clip(np.cov(Pa, Ta, bias=True)[0, 1] / var,
+                                    0.5, 1.8)) if var > 1e-6 else 1.0)
+                coef.append((aa, float(Ta.mean() - aa * Pa.mean())))
+            rest = [k for k in range(len(tgts)) if k not in a_idx]
+            e = [np.hypot(coef[0][0] * P_med[k, 0] + coef[0][1] - T_med[k, 0],
+                          coef[1][0] * P_med[k, 1] + coef[1][1] - T_med[k, 1])
+                 for k in rest]
             errs.append(float(np.mean(e)))
-            print(f"  {s}: {errs[-1]:.0f}px (n={int((S == s).sum())})")
-        print(f"ARKit-teacher LOSO: {np.mean(errs):.0f}px "
+            print(f"  {s}: aligned {errs[-1]:.0f}px "
+                  f"({len(rest)} held-out targets)")
+        print(f"ARKit-teacher LOSO (aligned): {np.mean(errs):.0f}px "
               f"over {len(judges)} session(s)")
     model = make().fit(X, Y)
     import pickle
