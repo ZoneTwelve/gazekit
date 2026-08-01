@@ -13,7 +13,7 @@ def main():
     au = sub.add_parser("auto",
                         help="guided end-to-end: collect everything missing, "
                              "train, evaluate, then adapt in ambient mode")
-    au.add_argument("--camera", type=int, default=0)
+    au.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     au.add_argument("--full", action="store_true",
                     help="run every collection step even if data exists")
     au.add_argument("--cnn", action="store_true",
@@ -24,10 +24,10 @@ def main():
                          "ambient mode (endless; Ctrl+C to stop)")
 
     d = sub.add_parser("doctor", help="run the environment check only")
-    d.add_argument("--camera", type=int, default=0)
+    d.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
 
     c = sub.add_parser("calibrate", help="run the full training process")
-    c.add_argument("--camera", type=int, default=0)
+    c.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     c.add_argument("--points", type=int, default=16, choices=(9, 13, 16),
                    help="grid size (16 = 4x4, recommended)")
     c.add_argument("--rounds", type=int, default=2,
@@ -38,10 +38,10 @@ def main():
     co.add_argument("scenario",
                     choices=("pursuit", "edges", "posture", "vor", "blinks",
                              "daily"))
-    co.add_argument("--camera", type=int, default=0)
+    co.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
 
     l = sub.add_parser("live", help="show the live gaze dot")
-    l.add_argument("--camera", type=int, default=0)
+    l.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     l.add_argument("--backend",
                    choices=("ridge", "cnn", "hybrid", "eyeball"),
                    default="ridge")
@@ -51,7 +51,7 @@ def main():
 
     a = sub.add_parser("ambient",
                        help="background trainer: popup dots while you work")
-    a.add_argument("--camera", type=int, default=0)
+    a.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     a.add_argument("--min-wait", type=float, default=15.0,
                    help="seconds between popups, lower bound")
     a.add_argument("--max-wait", type=float, default=45.0,
@@ -63,7 +63,7 @@ def main():
 
     v = sub.add_parser("verify",
                        help="mouse-as-ground-truth error measurement")
-    v.add_argument("--camera", type=int, default=0)
+    v.add_argument("--camera", default="0", help="camera index, or 'phone' for the GazeTeacher iPhone stream")
     v.add_argument("--mode", choices=("free", "path"), default="free",
                    help="free = roam anywhere; path = follow a wide track")
     v.add_argument("--teach", action="store_true",
@@ -98,6 +98,8 @@ def main():
     ar.add_argument("--calib", action="store_true",
                     help="camera-free target display for teacher calibration"
                          " (use while the iPhone is busy being the teacher)")
+    ar.add_argument("--monitor", action="store_true",
+                    help="live viewer of the phone's frames + gaze numbers")
 
     j = sub.add_parser("journal", help="show the unified run journal")
     j.add_argument("--last", type=int, default=15)
@@ -216,11 +218,13 @@ def _dispatch(args):
                    do_update=not args.no_update, train_cnn=args.cnn)
 
     elif args.cmd == "arkit":
-        from .arkit import calib, fit, receive
+        from .arkit import calib, fit, monitor, receive
         if args.fit:
             fit()
         elif args.calib:
             calib()
+        elif args.monitor:
+            monitor()
         else:
             receive()
 

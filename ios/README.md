@@ -1,31 +1,24 @@
-# GazeTeacher
+# GazeTeacher (in-repo Xcode project)
 
-iPhone TrueDepth gaze teacher for [gazekit](https://github.com/ZoneTwelve/gazekit).
-Streams ARKit `lookAtPoint`, eye/face transforms and blink blendshapes over
-UDP JSON (~60 Hz) to the gazekit receiver on your Mac — real gaze labels
-for distillation.
+The iPhone as gazekit's **camera AND gaze teacher** at the same time.
+Streams ARKit gaze (UDP :5577) + camera frames (TCP :5578), with an
+on-device preview (ARKit owns the camera exclusively — this preview is
+the only way to see what it sees).
 
-## Build & run (once)
+Build: `open ios/GazeTeacher.xcodeproj` → Run on a Face ID iPhone
+(team pre-filled; first run: confirm device registration, trust the
+developer on the phone).
 
-1. Open `GazeTeacher.xcodeproj` in Xcode (16+).
-2. Signing & Capabilities → select your team (automatic signing).
-3. Run on an iPhone with Face ID (TrueDepth required).
-
-## Use
+## The one-device workflow (Mac mini + iPhone)
 
 ```sh
-# on the Mac — prints the IP to enter in the app, records the stream
-python -m gazekit arkit
+# phone: open GazeTeacher, IP = your Mac's LAN address, tap Start
+python -m gazekit arkit --monitor     # optional: see what the phone sees
+python -m gazekit calibrate --camera phone   # normal calibration, phone as camera
+python -m gazekit arkit --fit         # fit the ARKit->screen teacher mapping
 ```
 
-Put the phone near your Mac screen facing you, enter the IP, tap **Start**.
-Leave it streaming while you run any gazekit collection (calibrate /
-collect / ambient). Then:
-
-```sh
-python -m gazekit arkit --fit   # pair + fit the ARKit->screen mapping
-```
-
-Packet format: `{"t", "look":[x,y,z], "face":[16], "leye":[16],
-"reye":[16], "blinkL", "blinkR"}` — column-major 4×4 transforms, face
-coordinate space for `look`.
+`--camera phone` works for every command (calibrate / collect / live /
+ambient / verify / auto). While it runs, the app's gaze stream is recorded
+in-process with the same clock — every collection doubles as
+teacher-pairing data. `arkit --calib` remains as the camera-free fallback.

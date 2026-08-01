@@ -84,6 +84,47 @@ def receive(port=PORT):
         sock.close()
 
 
+def monitor():
+    """Live viewer for the phone stream: shows exactly what ARKit sees
+    (frames via tcp:5578) plus the latest gaze/blink numbers — the Mac-side
+    debug window for the GazeTeacher app."""
+    import cv2
+    from .phonecam import PhoneCamera
+    cam = PhoneCamera()
+    print("monitor: q to quit")
+    last_gaze = ""
+    n, t0 = 0, time.monotonic()
+    fps = 0.0
+    try:
+        while True:
+            ok, frame = cam.read()
+            if not ok:
+                continue
+            n += 1
+            if time.monotonic() - t0 >= 2.0:
+                fps = n / (time.monotonic() - t0)
+                n, t0 = 0, time.monotonic()
+            if cam.gaze_path and cam.gaze_path.exists():
+                try:
+                    with open(cam.gaze_path, "rb") as f:
+                        f.seek(max(f.seek(0, 2) - 400, 0))
+                        line = f.read().splitlines()[-1]
+                    pkt = json.loads(line)
+                    last_gaze = (f"look=({pkt['look'][0]:+.2f},"
+                                 f"{pkt['look'][1]:+.2f}) "
+                                 f"blink={max(pkt['blinkL'], pkt['blinkR']):.2f}")
+                except (OSError, IndexError, json.JSONDecodeError, KeyError):
+                    pass
+            cv2.putText(frame, f"{fps:.0f} fps  {last_gaze}", (10, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (40, 220, 255), 2)
+            cv2.imshow("GazeTeacher monitor", frame)
+            if cv2.waitKey(1) & 0xFF in (27, ord("q")):
+                break
+    finally:
+        cam.release()
+        cv2.destroyAllWindows()
+
+
 def calib(points=13):
     """Camera-free calibration for the ARKit teacher: the screen shows
     targets and logs (t_start, t_end, target); the phone's stream provides
