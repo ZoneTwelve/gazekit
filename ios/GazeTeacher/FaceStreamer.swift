@@ -110,8 +110,17 @@ final class FaceStreamer: NSObject, ObservableObject, ARSessionDelegate {
             else { return }
             if wantPreview {
                 self.lastPreviewAt = now
-                let ui = UIImage(data: jpg)
-                DispatchQueue.main.async { self.preview = ui }
+                // sensor delivers landscape; rotate for a portrait preview
+                // (network frames stay raw — the Mac auto-orients them).
+                // If your preview appears upside down, use .left instead.
+                let upright = image.oriented(.right)
+                if let pjpg = self.ciContext.jpegRepresentation(
+                    of: upright, colorSpace: CGColorSpaceCreateDeviceRGB(),
+                    options: [kCGImageDestinationLossyCompressionQuality
+                              as CIImageRepresentationOption: 0.55]) {
+                    let ui = UIImage(data: pjpg)
+                    DispatchQueue.main.async { self.preview = ui }
+                }
             }
             guard sendable else { return }
             let msg: [String: Any] = ["type": "frame", "t": now,
