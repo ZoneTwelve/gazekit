@@ -364,14 +364,29 @@ class PhoneCamera:
                       "as-is (fix framing and restart if tracking fails)")
                 return
             # a saved rotation wins ties so runs stay consistent with the
-            # calibration that produced the deployed model
+            # calibration behind the deployed model — but only while it is
+            # still plausible: a sideways eye line (|tilt| > 45deg) means
+            # the phone is physically oriented differently now, and forcing
+            # the old value would feed the model garbage geometry
             if saved is not None:
                 for rot, name in names.items():
-                    if name == saved and scores[rot][0] >= scores[best][0] - 1:
+                    if name != saved:
+                        continue
+                    hits, neg_tilt = scores[rot]
+                    if hits >= scores[best][0] - 1 and -neg_tilt < 45:
                         best = rot
-                        break
+                    elif -neg_tilt >= 45:
+                        print(f"  saved rotation {saved} now looks sideways "
+                              f"(eye tilt {-neg_tilt:.0f}deg) — the phone is "
+                              "positioned differently than at calibration; "
+                              "re-probing")
+                    break
             self._rotation = best
             name = names[best]
+            if -scores[best][1] >= 45:
+                print(f"  WARNING: best eye tilt is {-scores[best][1]:.0f}deg "
+                      "— no rotation yields an upright face. Stand the phone "
+                      "the way it was during calibration.")
             print(f"orientation locked: rotate={name} "
                   f"(hits={scores[best][0]}/{len(frames)}, "
                   f"eye tilt {-scores[best][1]:.0f}deg"
