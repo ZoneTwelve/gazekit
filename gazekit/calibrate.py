@@ -38,8 +38,22 @@ SAMPLES_PER_POINT = 40
 MIN_GOOD = 22
 POINT_TIMEOUT_S = 4.0
 MAX_RETRIES = 2
-BLINK_MAX = 0.35
-POSE_MAX_DEG = 22.0
+
+
+def blink_max(path="data/blink_profile.json", default=0.35):
+    """Personal closed-eye threshold from `collect blinks`. Looking at
+    screen corners narrows the lids and pushes the generic 0.35 over the
+    line — the personal value (measured against real closed frames) doesn't."""
+    try:
+        with open(path) as f:
+            return float(json.load(f)["blink_on"])
+    except (OSError, KeyError, ValueError):
+        return default
+
+
+BLINK_MAX = blink_max()
+POSE_MAX_DEG = 30.0    # per-sample pose limit; generous by design — VOR
+                       # and posture scenarios need the extremes
 PASS_FRAC = 0.045      # mean validation error <= 4.5% of diagonal -> stable
 MARGINAL_FRAC = 0.075
 
@@ -87,7 +101,7 @@ def _tick(win, img):
         raise Aborted
 
 
-def environment_gate(win, cap, tracker, hold_s=2.0):
+def environment_gate(win, cap, tracker, hold_s=1.2):
     """Stage 1: block until conditions are good and held for hold_s seconds."""
     good_since = None
     while True:
@@ -105,17 +119,20 @@ def environment_gate(win, cap, tracker, hold_s=2.0):
             # behaves the same on a 640px phone stream and a 1280px webcam
             # (absolute pixels made the phone demand an absurd distance)
             iod = obs.interocular_px / max(frame.shape[1], 1)
-            lo, hi = 0.043, 0.30
+            lo, hi = 0.030, 0.40
             checks.append(("Distance OK" if lo <= iod <= hi else
                            ("Move CLOSER to the camera" if iod < lo else
                             "Move FARTHER from the camera"), lo <= iod <= hi))
-            bright_ok = 60 <= obs.brightness <= 215
+            bright_ok = 40 <= obs.brightness <= 235
             checks.append(("Lighting OK" if bright_ok else
                            "Fix lighting (light your face, avoid strong backlight)",
                            bright_ok))
-            pose_ok = abs(obs.yaw) < 15 and abs(obs.pitch) < 15
+            # the gate only has to confirm a workable setup — per-sample
+            # gating during collection is the real quality filter, so keep
+            # these generous (a phone beside the screen is naturally off-axis)
+            pose_ok = abs(obs.yaw) < 30 and abs(obs.pitch) < 30
             checks.append(("Head pose OK" if pose_ok else
-                           "Face the screen straight on", pose_ok))
+                           "Face the camera more directly", pose_ok))
             checks.append(("Eyes open" if obs.blink < BLINK_MAX else "Eyes open?",
                            obs.blink < BLINK_MAX))
 
