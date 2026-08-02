@@ -10,3 +10,7 @@ transformers==4.49.0
 timm
 einops
 pandas>=2.0
+# ambient overlay window (macOS)
+pyobjc-framework-Cocoa; sys_platform == "darwin"
+# `gazekit publish` (Hub sync); small, no model downloads
+huggingface_hub>=0.26

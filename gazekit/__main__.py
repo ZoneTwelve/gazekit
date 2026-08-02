@@ -101,6 +101,16 @@ def main():
     ar.add_argument("--monitor", action="store_true",
                     help="live viewer of the phone's frames + gaze numbers")
 
+    pub = sub.add_parser("publish",
+                         help="sync models + dataset to the Hugging Face "
+                              "Hub through the publish gates "
+                              "(docs/PUBLISH_STANDARD.md)")
+    pub.add_argument("what", nargs="?", choices=("all", "models", "dataset"),
+                     default="all")
+    pub.add_argument("--public", action="store_true",
+                     help="create the dataset repo public (default: private "
+                          "— it contains your eye-crop images)")
+
     sub.add_parser("selftest",
                     help="automated release checks "
                          "(no camera needed)")
@@ -157,7 +167,8 @@ def main():
                      "deployed_probe_err_px", "loso_px", "loso_aligned_px",
                      "loto_px", "samples", "recommendations",
                      "per_condition_px", "mean_px", "median_px", "p90_px",
-                     "n", "probe_err_px", "pairs") if k in result}
+                     "n", "probe_err_px", "pairs", "dataset",
+                     "gaze_model.pkl", "gaze_cnn.pt") if k in result}
         log_run(args.cmd, sys.argv[1:], status,
                 time.monotonic() - t0, keep)
 
@@ -259,6 +270,10 @@ def _dispatch(args):
     elif args.cmd == "annotate":
         from .annotate import run
         run(redo=args.redo)
+
+    elif args.cmd == "publish":
+        from .publish import run
+        return run(what=args.what, public=args.public)
 
     elif args.cmd == "train-cnn":
         from .cnn import train

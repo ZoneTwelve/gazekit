@@ -112,6 +112,19 @@ session drift) plus leave-one-target-out (interpolation). The deployed
 model is only replaced when the candidate wins on the newest held-out
 session. History accumulates in `data/eval_history.jsonl`.
 
+### Publishing to the Hugging Face Hub
+
+```sh
+$PY -m gazekit publish            # models + dataset, through the gates
+$PY -m gazekit publish dataset --public   # opt in to a public dataset repo
+```
+
+Publication follows `docs/PUBLISH_STANDARD.md`: models upload only if they
+beat the currently published ones on the held-out gate protocol; the
+dataset upload is allowlist-only (samples + eye crops, never context
+snapshots) and the dataset repo is created **private** by default because
+it contains your eye images. Needs `hf auth login` with a write token.
+
 ## Ambient trainer (runs while you work)
 
 ```sh

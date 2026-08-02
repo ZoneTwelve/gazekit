@@ -35,17 +35,17 @@ def _imports():
     import importlib
     for m in ("ambient", "annotate", "arkit", "auto", "calibrate", "camera",
               "cnn", "collect", "dataset", "evaluate", "eyeball", "filters",
-              "journal", "live", "model", "phonecam", "screen", "tracker",
-              "ui", "verify"):
+              "journal", "live", "model", "phonecam", "publish", "screen",
+              "tracker", "ui", "verify"):
         importlib.import_module(f"gazekit.{m}")
-    return "20 modules"
+    return "21 modules"
 
 
 @check("CLI parses every subcommand")
 def _cli():
     cmds = ["auto", "cameras", "doctor", "calibrate", "collect", "live",
             "ambient", "verify", "iterate", "annotate", "train-cnn", "arkit",
-            "journal", "camera", "selftest"]
+            "journal", "camera", "publish", "selftest"]
     out = subprocess.run([sys.executable, "-m", "gazekit", "--help"],
                          capture_output=True, text=True, timeout=60).stdout
     missing = [c for c in cmds if c not in out]
