@@ -34,9 +34,9 @@ def check(name):
 def _imports():
     import importlib
     modules = ("ambient", "annotate", "arkit", "auto", "calibrate", "camera",
-               "cnn", "collect", "dataset", "evaluate", "eyeball", "filters",
-               "journal", "live", "model", "phonecam", "publish", "screen",
-               "quality", "tracker", "ui", "verify")
+               "cnn", "collect", "dataset", "evaluate", "eyeball", "feedback",
+               "filters", "journal", "live", "model", "phonecam", "publish",
+               "screen", "quality", "tracker", "ui", "verify")
     for m in modules:
         importlib.import_module(f"gazekit.{m}")
     return f"{len(modules)} modules"
@@ -126,6 +126,38 @@ def _quality():
     assert np.isclose(quality_weight(0.0), 0.55)
     assert np.isclose(quality_weight(1.0), 1.0)
     return "legacy=1.0, bounded 0.55..1.0"
+
+
+@check("evaluation feedback is advisory and source-isolated")
+def _feedback():
+    from gazekit.feedback import write_feedback
+    root = Path("data/_selftest_feedback")
+    shutil.rmtree(root, ignore_errors=True)
+    report = {
+        "samples": 180,
+        "sessions": 2,
+        "loso_px": 160.0,
+        "loso_p50_px": 80.0,
+        "loso_p95_px": 220.0,
+        "loto_px": 90.0,
+        "coverage": {"days": 1, "pose_gt10deg_pct": 4.0,
+                     "screen_edge_pct": 2.0},
+        "quality": {"mean": 0.78, "p10": 0.52,
+                    "low_lt_0_7_pct": 22.0},
+        "region_map_px": [[80, 95, None], [90, 240, 100], [85, 88, 92]],
+        "recommendations": ["collect more days"],
+    }
+    web_path, web = write_feedback(report, "0", root)
+    phone_path, phone = write_feedback(report, "phone", root)
+    disk = json.loads(web_path.read_text())
+    allowed = {"adjust_region_sampling", "collect", "review_quality", "verify"}
+    assert (web_path != phone_path and web_path.exists() and phone_path.exists()
+            and disk["camera_domain"] == "webcam")
+    assert phone["camera_domain"] == "phone"
+    assert web["collection_suggestions"]["weak_regions"]
+    assert all(a["advisory"] and a["type"] in allowed for a in web["actions"])
+    shutil.rmtree(root, ignore_errors=True)
+    return "advisory JSON, webcam/phone paths separated"
 
 
 @check("blink gate uses the personal profile when present")

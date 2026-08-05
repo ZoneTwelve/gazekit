@@ -425,6 +425,10 @@ def run(dataset_root="data/dataset", model_out=None,
     print(f"  coverage: {cov['days']} day(s), "
           f"{cov['pose_gt10deg_pct']}% samples with head >10° off, "
           f"{cov['screen_edge_pct']}% near screen edges")
+    quality = report["quality"]
+    print(f"  quality: mean {quality['mean']:.3f}, "
+          f"p10 {quality['p10']:.3f}, "
+          f"low {quality['low_lt_0_7_pct']:.1f}%")
     missing = []
     if cov["days"] < 3:
         missing.append("more DAYS (different lighting)")
@@ -547,6 +551,16 @@ def run(dataset_root="data/dataset", model_out=None,
     print("\nadvice:")
     for r in rec:
         print(f"  - {r}")
+
+    # Keep the next-step decision in a stable artifact as well as in terminal
+    # text. It is deliberately advisory: no feedback action can mutate data
+    # or bypass the deploy gate.
+    from .feedback import write_feedback
+    feedback_file, feedback = write_feedback(report, source)
+    report["feedback_path"] = str(feedback_file)
+    report["feedback_actions"] = len(feedback["actions"])
+    print(f"\nfeedback: {feedback_file} "
+          f"({report['feedback_actions']} advisory action(s))")
 
     entry = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), **report,
              "pruned": sum(len(v) for v in load_pruned(root).values()),

@@ -112,6 +112,11 @@ session drift) plus leave-one-target-out (interpolation). The deployed
 model is only replaced when the candidate wins on the newest held-out
 session. History accumulates in `data/eval_history.jsonl`.
 
+Each iteration also writes a source-specific, advisory next-step artifact:
+`data/eval/feedback_webcam.json` or `data/eval/feedback_phone.json`. It
+captures coverage gaps, weak screen regions, and quality signals for the next
+collection; it never modifies samples, labels, or deployed models.
+
 ### Publishing to the Hugging Face Hub
 
 ```sh

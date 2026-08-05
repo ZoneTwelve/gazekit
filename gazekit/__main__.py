@@ -168,6 +168,7 @@ def main():
                      "loto_px", "samples", "recommendations",
                      "per_condition_px", "mean_px", "median_px", "p90_px",
                      "n", "probe_err_px", "pairs", "dataset",
+                     "feedback_path", "feedback_actions",
                      "gaze_model.pkl", "gaze_cnn.pt") if k in result}
         log_run(args.cmd, sys.argv[1:], status,
                 time.monotonic() - t0, keep)
