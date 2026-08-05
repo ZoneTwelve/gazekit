@@ -21,8 +21,7 @@ from . import ui
 from .calibrate import (Aborted, collect_points, environment_gate, info_screen,
                         grid_points)
 from .camera import open_camera, read_mirrored
-from .dataset import DatasetWriter, load_dwell_features
-from .model import GazeModel
+from .dataset import DatasetWriter
 from .tracker import FaceTracker
 
 PURSUIT_LAG_S = 0.12   # eye trails a moving target by ~100-150 ms
@@ -194,12 +193,62 @@ POSTURES = [
 ]
 
 
+def promotion_gate_state(records) -> dict:
+    """Decide whether collection has enough independent sessions to promote.
+
+    The caller supplies records already filtered to one camera domain. A
+    single session cannot support the project's session-held-out deploy gate;
+    its initial model must come from `calibrate` and fresh probe targets.
+    """
+    by_session = {}
+    for record in records:
+        by_session.setdefault(record["session"], set()).add(
+            tuple(record.get("Y", ())))
+    sessions = set(by_session)
+    if len(sessions) < 2:
+        return {
+            "promotion": "skipped",
+            "promotion_reason": "needs at least two sessions for a "
+                                "session-held-out gate",
+            "gate_sessions": len(sessions),
+        }
+    if not any(len(targets) >= 6 for targets in by_session.values()):
+        return {
+            "promotion": "skipped",
+            "promotion_reason": "needs a session with at least six "
+                                "distinct targets for the held-out gate",
+            "gate_sessions": len(sessions),
+        }
+    return {"promotion": "gated", "gate_sessions": len(sessions)}
+
+
+def _run_post_collection_gate(dataset_root, model_out, source) -> dict:
+    """Run the normal evaluator rather than writing a collection refit."""
+    from .evaluate import load_records, run as iterate
+
+    records, _ = load_records(dataset_root, source=source)
+    state = promotion_gate_state(records)
+    if state["promotion"] == "skipped":
+        print("post-collection promotion skipped: "
+              f"{state['promotion_reason']}")
+        return state
+
+    print("post-collection gate: clean + session-held-out validation")
+    report = iterate(dataset_root=dataset_root, model_out=model_out,
+                     source=source)
+    return {
+        **state,
+        "updated": report.get("updated", False),
+        "kept_deployed": report.get("kept_deployed", False),
+        "feedback_path": report.get("feedback_path"),
+    }
+
+
 def run(scenario, camera_index=0, dataset_root="data/dataset",
         model_out=None,
         landmarker="models/face_landmarker.task", screen=None):
     from .dataset import model_path_for
     from .screen import screen_size
-    model_out = model_out or model_path_for()
     sw, sh = screen or screen_size()
     win = ui.FullscreenWindow("gazekit-collect", (sw, sh))
     def _waiting(elapsed):
@@ -214,7 +263,9 @@ def run(scenario, camera_index=0, dataset_root="data/dataset",
     cap = open_camera(camera_index, on_wait=_waiting)
     tracker = FaceTracker(landmarker)
     writer = DatasetWriter(dataset_root, (sw, sh))
-    refit_ridge = scenario not in ("pursuit", "blinks")
+    model_out = model_out or model_path_for(writer.camera)
+    should_gate_promotion = scenario not in ("pursuit", "blinks")
+    result = None
 
     try:
         environment_gate(win, cap, tracker)
@@ -273,23 +324,21 @@ def run(scenario, camera_index=0, dataset_root="data/dataset",
                                writer, tag="posture",
                                label_prefix=f"{name} ")
 
-        if refit_ridge:
+        result = {"scenario": scenario}
+        if should_gate_promotion:
             writer._f.flush()
-            X, Y, w = load_dwell_features(dataset_root)
-            if X is not None:
-                model = GazeModel((sw, sh))
-                cv_err = model.fit(X, Y, sample_weight=w)
-                model.save(model_out, {"refit_from": "collect:" + scenario,
-                                       "samples": int(len(X)),
-                                       "cv_error_px": round(cv_err, 1)})
-                print(f"ridge refit on {len(X)} samples "
-                      f"(cv {cv_err:.0f}px) -> {model_out}")
-        return True
+            result.update(_run_post_collection_gate(
+                dataset_root, model_out, writer.camera))
+        else:
+            result["promotion"] = "not-applicable"
+        return result
     except Aborted:
         print("collect aborted")
         return False
     finally:
         n = writer.close()
+        if result is not None:
+            result["samples"] = n
         print(f"dataset: {n} samples appended under {writer.dir}")
         tracker.close()
         cap.release()

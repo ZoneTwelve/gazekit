@@ -361,9 +361,9 @@ def evaluate(recs, screen):
 
 
 def run(dataset_root="data/dataset", model_out=None,
-        do_clean=True, do_update=True, train_cnn=False):
+        do_clean=True, do_update=True, train_cnn=False, source=None):
     from .dataset import camera_source, model_path_for
-    source = camera_source()
+    source = str(camera_source() if source is None else source)
     model_out = model_out or model_path_for(source)
     root = Path(dataset_root)
     recs, screen = load_records(root, source=source)
@@ -485,9 +485,12 @@ def run(dataset_root="data/dataset", model_out=None,
                 print("  -> deployed model kept (candidate not better; "
                       "note: deployed may have trained on this session)")
         else:
-            candidate.save(model_out, {"refit_from": "iterate", **report})
-            updated = True
-            print("\nsingle session — model saved")
+            print("\nno deployment update — need at least two sessions and "
+                  "one held-out session with six distinct targets; calibrate "
+                  "owns initial promotion through fresh probe targets")
+    report["updated"] = updated
+    if do_update:
+        report["kept_deployed"] = not updated
 
     # 3D eyeball prototype: report alongside ridge once raw-landmark
     # sessions exist (harmless no-op until then)
@@ -499,19 +502,9 @@ def run(dataset_root="data/dataset", model_out=None,
     except Exception as e:
         print(f"  (eyeball eval skipped: {e})")
 
-    # VLM environment annotation: run automatically whenever collection
-    # sessions have produced snapshots that aren't annotated yet
-    try:
-        from .annotate import CONTEXT_DIR, OUT, run as annotate_run
-        snaps = {p.stem for p in CONTEXT_DIR.glob("session_*.jpg")}
-        done = ({json.loads(l)["session"] for l in open(OUT)}
-                if OUT.exists() else set())
-        if snaps - done:
-            print(f"\nannotating {len(snaps - done)} new context "
-                  "snapshot(s) with Florence-2...")
-            annotate_run()
-    except Exception as e:
-        print(f"  (annotation skipped: {e})")
+    # VLM annotation is intentionally opt-in through `gazekit annotate`.
+    # Its first use downloads ~0.5 GB, and `iterate` must remain a safe,
+    # repeatable evaluation command with no surprise model download.
 
     # advisor: turn the numbers into "what to improve next" so nobody has
     # to interpret the tables — recommendations derived from this project's
@@ -562,13 +555,18 @@ def run(dataset_root="data/dataset", model_out=None,
     print(f"\nfeedback: {feedback_file} "
           f"({report['feedback_actions']} advisory action(s))")
 
-    entry = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), **report,
+    entry = {"t": time.strftime("%Y-%m-%d %H:%M:%S"), "source": source,
+             **report,
              "pruned": sum(len(v) for v in load_pruned(root).values()),
-             "updated": updated}
+             }
     hist_path = Path("data/eval_history.jsonl")
     with open(hist_path, "a") as f:
         f.write(json.dumps(entry) + "\n")
-    hist = [json.loads(l) for l in open(hist_path)]
+    hist = []
+    for line in open(hist_path):
+        entry = json.loads(line)
+        if str(entry.get("source", "0")) == source:
+            hist.append(entry)
     if len(hist) > 1:
         trend = [h.get("loso_px") or h.get("loto_px") for h in hist[-6:]]
         print(f"\ntrend (last {len(trend)} runs): "

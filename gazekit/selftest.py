@@ -4,7 +4,10 @@ No camera, no screen: everything here must pass before a beta ships.
 """
 
 import base64
+import contextlib
+import io
 import json
+import os
 import shutil
 import socket
 import struct
@@ -13,6 +16,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
@@ -158,6 +162,57 @@ def _feedback():
     assert all(a["advisory"] and a["type"] in allowed for a in web["actions"])
     shutil.rmtree(root, ignore_errors=True)
     return "advisory JSON, webcam/phone paths separated"
+
+
+@check("post-collection promotion requires a held-out gate")
+def _collection_gate():
+    from gazekit.collect import promotion_gate_state
+    single = [{"session": "s1", "Y": (100, 100)}]
+    sparse = ([{"session": "s1", "Y": (100, 100)},
+               {"session": "s2", "Y": (100, 100)}])
+    targets = [(100 * i, 100 * i) for i in range(6)]
+    ready = ([{"session": "s1", "Y": target} for target in targets]
+             + [{"session": "s2", "Y": target} for target in targets])
+    assert promotion_gate_state(single)["promotion"] == "skipped"
+    assert promotion_gate_state(sparse)["promotion"] == "skipped"
+    assert promotion_gate_state(ready)["promotion"] == "gated"
+    return "two sessions + six held-out targets required"
+
+
+@check("gated iteration emits feedback without a VLM download")
+def _iterate_gate():
+    from gazekit.evaluate import run as iterate
+    rng = np.random.default_rng(42)
+    with TemporaryDirectory() as tmp:
+        before = os.getcwd()
+        try:
+            os.chdir(tmp)
+            root = Path("data/dataset")
+            targets = [(160 + 300 * x, 120 + 150 * y)
+                       for y in range(2) for x in range(3)]
+            for session_idx in range(2):
+                session = root / f"session_2026080{session_idx + 1}_120000"
+                session.mkdir(parents=True)
+                rows = [{"meta": True, "screen_size": [1920, 1080],
+                         "camera": "0"}]
+                for i, target in enumerate(targets):
+                    rows.append({"i": i, "tag": "calib",
+                                 "features": rng.normal(size=14).tolist(),
+                                 "target": list(target),
+                                 "quality_score": 0.9})
+                (session / "samples.jsonl").write_text(
+                    "\n".join(json.dumps(row) for row in rows) + "\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                report = iterate(dataset_root=root,
+                                 model_out="data/gaze_model.pkl",
+                                 do_clean=False, source="0")
+            assert report["updated"] is True
+            assert Path("data/gaze_model.pkl").exists()
+            assert Path("data/eval/feedback_webcam.json").exists()
+            assert not Path("data/context/annotations.jsonl").exists()
+        finally:
+            os.chdir(before)
+    return "held-out promotion + feedback, VLM remains opt-in"
 
 
 @check("blink gate uses the personal profile when present")

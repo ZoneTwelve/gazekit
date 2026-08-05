@@ -119,6 +119,11 @@ Each iteration also writes a source-specific, advisory next-step artifact:
 captures coverage gaps, weak screen regions, and quality signals for the next
 collection; it never modifies samples, labels, or deployed models.
 
+Environment annotation is optional: run `$PY -m gazekit annotate` after
+sessions have context snapshots if you want lighting/glasses slices in the
+report. Its first use downloads Florence-2 (~0.5 GB); `iterate` never starts
+that download automatically.
+
 ### Publishing to the Hugging Face Hub
 
 ```sh

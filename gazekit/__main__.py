@@ -169,6 +169,8 @@ def main():
                      "per_condition_px", "mean_px", "median_px", "p90_px",
                      "n", "probe_err_px", "pairs", "dataset",
                      "feedback_path", "feedback_actions",
+                     "promotion", "promotion_reason", "gate_sessions",
+                     "updated",
                      "gaze_model.pkl", "gaze_cnn.pt") if k in result}
         log_run(args.cmd, sys.argv[1:], status,
                 time.monotonic() - t0, keep)
@@ -221,8 +223,9 @@ def _dispatch(args):
 
     elif args.cmd == "collect":
         from .collect import run
-        return {"n": 1} if run(args.scenario, camera_index=args.camera) \
-            else None
+        result = run(args.scenario, camera_index=args.camera)
+        return result if isinstance(result, dict) else ({"n": 1} if result
+                                                         else None)
 
     elif args.cmd == "live":
         from .live import run
