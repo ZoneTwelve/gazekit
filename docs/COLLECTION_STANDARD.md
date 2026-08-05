@@ -22,7 +22,9 @@ shipped without gates and burned a session.)
 
 3. **Provenance per sample** — timestamp, tag, and enough raw signal to
    re-derive features later (raw landmarks / transforms / counts). If it
-   isn't logged, a future model can't use it.
+   isn't logged, a future model can't use it. The stable row layout,
+   backwards-compatibility rules, and quality-weight policy are specified in
+   [`DATA_STANDARD.md`](DATA_STANDARD.md).
 
 4. **Validation + verdict** — after collection, held-out probe targets the
    model never fit on measure honest error; report a verdict against the
