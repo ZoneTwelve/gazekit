@@ -23,6 +23,7 @@ import numpy as np
 
 from .dataset import DWELL_TAGS, load_pruned
 from .model import GazeModel
+from .quality import quality_weight, record_quality_score
 
 LOW_TRUST_TAGS = {"click", "ambient", "mouse"}
 # vor/posture clusters have deliberately large feature spread (head moves
@@ -58,7 +59,10 @@ def load_records(root: str | Path, source=None):
             rows.append({"session": sess.name, "i": rec["i"],
                          "tag": rec["tag"], "camera": sess_cam,
                          "X": np.array(rec["features"]),
-                         "Y": np.array(rec["target"], dtype=float)})
+                         "Y": np.array(rec["target"], dtype=float),
+                         # Rows written before schema v2 deliberately read as
+                         # fully trusted; upgrades never invalidate history.
+                         "quality_score": record_quality_score(rec)})
         if source is None or sess_cam == source:
             recs.extend(rows)
     return recs, screen
@@ -206,6 +210,7 @@ def _weights(recs):
     age = {s: len(sessions) - 1 - i for i, s in enumerate(sessions)}
     return np.array([
         (LOW_TRUST_WEIGHT if r["tag"] in LOW_TRUST_TAGS else 1.0)
+        * quality_weight(r.get("quality_score", 1.0))
         * RECENCY_DECAY ** age[r["session"]] for r in recs])
 
 
@@ -319,6 +324,13 @@ def evaluate(recs, screen):
         "screen_edge_pct": round(100 * float(edge_band.mean()), 1),
         "tags": {t: sum(1 for r in recs if r["tag"] == t)
                  for t in sorted({r["tag"] for r in recs})},
+    }
+    quality = np.array([r.get("quality_score", 1.0) for r in recs],
+                       dtype=float)
+    report["quality"] = {
+        "mean": round(float(quality.mean()), 3),
+        "p10": round(float(np.percentile(quality, 10)), 3),
+        "low_lt_0_7_pct": round(100 * float((quality < 0.7).mean()), 1),
     }
 
     # VLM condition slicing: once Florence-2 annotations exist, break the

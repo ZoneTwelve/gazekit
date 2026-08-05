@@ -11,14 +11,19 @@ each time you calibrate. Layout:
 
 import json
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
 import numpy as np
 
+from .quality import observation_quality, quality_weight, record_quality_score
+
 # eye-region landmark indices logged raw for future 3D-eyeball fitting:
 # iris rings (468-477), corners (33,133,362,263), lids (159,145,386,374)
 EYE_LM_IDX = list(range(468, 478)) + [33, 133, 362, 263, 159, 145, 386, 374]
+DATA_SCHEMA_VERSION = 2
+FEATURE_SCHEMA = "ridge-raw14"
 
 
 def camera_source():
@@ -47,9 +52,16 @@ class DatasetWriter:
         self.crops.mkdir(parents=True, exist_ok=True)
         self._f = open(self.dir / "samples.jsonl", "w")
         self._n = 0
-        self._f.write(json.dumps({"meta": True,
-                                  "screen_size": list(screen_size),
-                                  "camera": camera_source()}) + "\n")
+        self.camera = camera_source()
+        self._f.write(json.dumps({
+            "meta": True,
+            "schema_version": DATA_SCHEMA_VERSION,
+            "session_id": self.dir.name,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "screen_size": list(screen_size),
+            "camera": self.camera,
+            "feature_schema": FEATURE_SCHEMA,
+        }) + "\n")
 
     def save_context(self, frame_bgr):
         """One full-frame snapshot per session for offline environment
@@ -72,7 +84,8 @@ class DatasetWriter:
         self._n += 1
         cv2.imwrite(str(self.crops / f"{i:06d}_R.png"), obs.eye_crops[0])
         cv2.imwrite(str(self.crops / f"{i:06d}_L.png"), obs.eye_crops[1])
-        self._f.write(json.dumps({
+        quality = observation_quality(obs)
+        record = {
             "i": i, "tag": tag,
             "target": [float(target_xy[0]), float(target_xy[1])],
             "features": [float(v) for v in obs.features],
@@ -87,7 +100,12 @@ class DatasetWriter:
                        if obs.landmarks_px is not None else None),
             "tmatrix": (np.round(obs.extras["tmatrix"], 5).tolist()
                         if "tmatrix" in obs.extras else None),
-        }) + "\n")
+            "quality_score": quality["quality_score"],
+            "quality_components": quality["quality_components"],
+        }
+        if quality["frame_size"] is not None:
+            record["frame_size"] = quality["frame_size"]
+        self._f.write(json.dumps(record) + "\n")
 
     def close(self):
         self._f.close()
@@ -140,7 +158,8 @@ def load_dwell_features(root: str | Path, last_n: int = 4):
             Y.append(rec["target"])
             trust = (LOW_TRUST_WEIGHT
                      if rec["tag"] in ("click", "ambient", "mouse") else 1.0)
-            W.append(trust * RECENCY_DECAY ** used)
+            W.append(trust * quality_weight(record_quality_score(rec))
+                     * RECENCY_DECAY ** used)
         if len(X) > n_before:  # only sessions that contributed count
             used += 1
             if used >= last_n:

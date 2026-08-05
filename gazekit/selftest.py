@@ -33,12 +33,13 @@ def check(name):
 @check("all modules import")
 def _imports():
     import importlib
-    for m in ("ambient", "annotate", "arkit", "auto", "calibrate", "camera",
-              "cnn", "collect", "dataset", "evaluate", "eyeball", "filters",
-              "journal", "live", "model", "phonecam", "publish", "screen",
-              "tracker", "ui", "verify"):
+    modules = ("ambient", "annotate", "arkit", "auto", "calibrate", "camera",
+               "cnn", "collect", "dataset", "evaluate", "eyeball", "filters",
+               "journal", "live", "model", "phonecam", "publish", "screen",
+               "quality", "tracker", "ui", "verify")
+    for m in modules:
         importlib.import_module(f"gazekit.{m}")
-    return "21 modules"
+    return f"{len(modules)} modules"
 
 
 @check("CLI parses every subcommand")
@@ -89,23 +90,42 @@ def _model():
 
 @check("dataset write/read round-trip")
 def _dataset():
-    from gazekit.dataset import DatasetWriter, load_sessions
+    from gazekit.dataset import DATA_SCHEMA_VERSION, DatasetWriter, load_sessions
     from gazekit.tracker import Observation
     root = Path("data/_selftest_ds")
     shutil.rmtree(root, ignore_errors=True)
     w = DatasetWriter(root, (1920, 1080))
-    obs = Observation(ok=True, features=np.zeros(14), interocular_px=80.0,
+    obs = Observation(ok=True, features=np.zeros(14), blink=0.02,
+                      yaw=4.0, pitch=-3.0, brightness=120.0,
+                      interocular_px=80.0,
                       landmarks_px=np.random.rand(478, 2) * 100,
                       eye_crops=(np.zeros((48, 64), np.uint8),
                                  np.zeros((48, 64), np.uint8)))
     obs.extras["tmatrix"] = np.eye(4)
+    obs.extras["frame_size"] = [1280, 720]
     for i in range(3):
         w.add(obs, (500 + i, 500), tag="calib")
     n = w.close()
     got = list(load_sessions(root))
+    rows = [json.loads(line) for line in (w.dir / "samples.jsonl").read_text().splitlines()]
     shutil.rmtree(root, ignore_errors=True)
     assert n == 3 and len(got) == 3, (n, len(got))
-    return "3 samples in, 3 out"
+    meta, sample = rows[0], rows[1]
+    assert meta["schema_version"] == DATA_SCHEMA_VERSION and meta["session_id"]
+    assert meta["feature_schema"] == "ridge-raw14"
+    assert set(sample["quality_components"]) == {"eyes", "pose", "distance", "lighting"}
+    assert 0.0 <= sample["quality_score"] <= 1.0 and sample["frame_size"] == [1280, 720]
+    return "3 samples in, v2 metadata + quality recorded"
+
+
+@check("quality weights preserve legacy samples")
+def _quality():
+    from gazekit.quality import quality_weight, record_quality_score
+    assert record_quality_score({}) == 1.0
+    assert record_quality_score({"quality_score": "not-a-number"}) == 1.0
+    assert np.isclose(quality_weight(0.0), 0.55)
+    assert np.isclose(quality_weight(1.0), 1.0)
+    return "legacy=1.0, bounded 0.55..1.0"
 
 
 @check("blink gate uses the personal profile when present")

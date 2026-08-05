@@ -123,6 +123,10 @@ class FaceTracker:
         pts = np.array([[lm.x * w, lm.y * h] for lm in res.face_landmarks[0]],
                        dtype=np.float64)
         obs.landmarks_px = pts
+        # Persist frame geometry with the raw landmarks. Schema-v2 quality
+        # uses the normalized interocular distance, so webcam and phone
+        # resolutions are judged on the same scale.
+        obs.extras["frame_size"] = [int(w), int(h)]
 
         blink = 0.0
         if res.face_blendshapes:
