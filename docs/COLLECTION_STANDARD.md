@@ -36,6 +36,19 @@ shipped without gates and burned a session.)
    (`data/dataset` / `data/arkit`), and deploy gates decide promotion —
    never unconditional overwrites.
 
+### Post-collection model promotion
+
+Collection code may refit a candidate in memory, but it must not write a
+deployed model directly. After a non-pursuit collection flushes its session,
+it calls `evaluate.run` for the camera domain. That provides the same clean,
+session-held-out validation, feedback artifact, and promotion gate as an
+explicit `gazekit iterate` run.
+
+If there are not yet two sessions in that domain, the collection is recorded
+but promotion is skipped. Initial deployment belongs to `calibrate`, which has
+its own fresh-probe gate. The collection result returned to the journal must
+state whether promotion was gated, updated, or skipped.
+
 ## Shared helpers to reuse (don't reinvent)
 
 - `calibrate.environment_gate`, `collect_point` (gating + MAD), `info_screen`

@@ -84,8 +84,10 @@ $PY -m gazekit collect pursuit    # smooth-pursuit sweep, whole-screen
                                   #   coverage (CNN training only)
 ```
 
-`posture`/`edges` immediately refit the ridge model on the newest sessions;
-all scenarios (plus live-mode clicks) feed the CNN dataset for `train-cnn`.
+`posture`/`edges` immediately run the same gated iteration used by
+`gazekit iterate`; they only replace the ridge model when the candidate wins
+the held-out protocol. All scenarios (plus live-mode clicks) feed the CNN
+dataset for `train-cnn`.
 
 ## Verifying accuracy with the mouse
 

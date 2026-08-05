@@ -6,8 +6,9 @@
     posture   9-point grid repeated at 3 instructed sitting positions —
               THE fix for "I moved and tracking went wrong"
 
-Each run appends to data/dataset/ and (except pursuit-only) refits the
-ridge model on the newest sessions so live mode improves immediately.
+Each run appends to data/dataset/ and (except pursuit-only) invokes the
+session-held-out deployment gate so live mode improves only when a candidate
+actually wins.
 """
 
 import math
