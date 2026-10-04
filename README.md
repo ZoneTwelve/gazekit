@@ -58,6 +58,8 @@ $PY -m gazekit cameras            # list cameras (iPhone appears here too)
 $PY -m gazekit doctor             # check lighting / distance / pose
 $PY -m gazekit calibrate          # full training process (~90 s)
 $PY -m gazekit live               # live gaze dot (ridge backend)
+$PY -m gazekit stream             # headless gaze -> UDP :5590 for other apps
+                                  #    (docs/STREAM_PROTOCOL.md)
 
 # after 2–3 calibrate sessions:
 $PY -m gazekit train-cnn          # fine-tune MobileNetV2 on your data (MPS)

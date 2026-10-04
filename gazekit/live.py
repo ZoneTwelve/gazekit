@@ -135,13 +135,8 @@ def _quick_align(win, cap, tracker, predict):
     return tuple(out)
 
 
-def run(camera_index=0, backend="ridge", model_path=None,
-        landmarker="models/face_landmarker.task", screen=None,
-        dataset_root="data/dataset", align=True):
-    from .screen import screen_size
-    from .filters import GazeSmoother
-    sw, sh = screen or screen_size()
-
+def build_predictor(backend, model_path, sw, sh):
+    """(predict, ridge, active) for a backend — shared by live and stream."""
     ridge = cnn = eyeball = None
     if backend in ("cnn", "hybrid"):
         from .cnn import CnnPredictor
@@ -171,6 +166,16 @@ def run(camera_index=0, backend="ridge", model_path=None,
 
     active = ridge if ridge is not None else (cnn if cnn is not None
                                               else eyeball)
+    return predict, ridge, active
+
+
+def run(camera_index=0, backend="ridge", model_path=None,
+        landmarker="models/face_landmarker.task", screen=None,
+        dataset_root="data/dataset", align=True):
+    from .screen import screen_size
+    from .filters import GazeSmoother
+    sw, sh = screen or screen_size()
+    predict, ridge, active = build_predictor(backend, model_path, sw, sh)
 
     # base data for click-teach refits (ridge backend only)
     base_X, base_Y, base_w = (None, None, None)

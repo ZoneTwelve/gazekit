@@ -49,6 +49,18 @@ def main():
     l.add_argument("--no-align", action="store_true",
                    help="skip the 3-point quick alignment at start")
 
+    st = sub.add_parser("stream",
+                        help="headless gaze stream over UDP for other apps "
+                             "(docs/STREAM_PROTOCOL.md)")
+    st.add_argument("--camera", default=None, help="camera index, or 'phone' for the GazeTeacher iPhone stream")
+    st.add_argument("--backend",
+                    choices=("ridge", "cnn", "hybrid", "eyeball"),
+                    default="ridge")
+    st.add_argument("--model", default=None)
+    st.add_argument("--port", type=int, default=5590)
+    st.add_argument("--no-align", action="store_true",
+                    help="skip the 3-point quick alignment at start")
+
     a = sub.add_parser("ambient",
                        help="background trainer: popup dots while you work")
     a.add_argument("--camera", default=None, help="camera index, or 'phone' for the GazeTeacher iPhone stream")
@@ -227,6 +239,12 @@ def _dispatch(args):
         from .live import run
         run(camera_index=args.camera, backend=args.backend,
             model_path=args.model, align=not args.no_align)
+
+    elif args.cmd == "stream":
+        from .stream import run
+        return run(camera_index=args.camera, backend=args.backend,
+                   model_path=args.model, port=args.port,
+                   align=not args.no_align)
 
     elif args.cmd == "ambient":
         if args.test:

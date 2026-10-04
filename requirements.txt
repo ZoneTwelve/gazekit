@@ -1,4 +1,5 @@
-mediapipe>=1.0.0
+# 1.0.1 aborts in FaceLandmarker init on macOS (Metal helper, even with CPU delegate)
+mediapipe>=1.0.0,!=1.0.1
 opencv-python>=4.10
 numpy>=1.26
 scikit-learn>=1.4

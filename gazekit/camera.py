@@ -15,8 +15,11 @@ def list_cameras(max_index: int = 5) -> list[dict]:
             out = subprocess.run(
                 ["system_profiler", "SPCameraDataType", "-json"],
                 capture_output=True, text=True, timeout=15).stdout
-            names = [c.get("_name", "?") for c in
-                     json.loads(out).get("SPCameraDataType", [])]
+            # OpenCV's AVFoundation backend indexes devices sorted by
+            # uniqueID, not in system_profiler's listing order
+            cams = sorted(json.loads(out).get("SPCameraDataType", []),
+                          key=lambda c: c.get("spcamera_unique-id", ""))
+            names = [c.get("_name", "?") for c in cams]
         except Exception:
             pass
     found = []

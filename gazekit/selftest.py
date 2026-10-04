@@ -36,16 +36,16 @@ def _imports():
     for m in ("ambient", "annotate", "arkit", "auto", "calibrate", "camera",
               "cnn", "collect", "dataset", "evaluate", "eyeball", "filters",
               "journal", "live", "model", "phonecam", "publish", "screen",
-              "tracker", "ui", "verify"):
+              "stream", "tracker", "ui", "verify"):
         importlib.import_module(f"gazekit.{m}")
-    return "21 modules"
+    return "22 modules"
 
 
 @check("CLI parses every subcommand")
 def _cli():
     cmds = ["auto", "cameras", "doctor", "calibrate", "collect", "live",
             "ambient", "verify", "iterate", "annotate", "train-cnn", "arkit",
-            "journal", "camera", "publish", "selftest"]
+            "journal", "camera", "publish", "selftest", "stream"]
     out = subprocess.run([sys.executable, "-m", "gazekit", "--help"],
                          capture_output=True, text=True, timeout=60).stdout
     missing = [c for c in cmds if c not in out]
@@ -200,6 +200,63 @@ def _phone():
     assert ok and frame is not None, "no frame"
     assert "session_start" in events and "session_stop" in events, events
     return "connect -> start -> frames -> stop"
+
+
+@check("gaze stream publishes the UDP protocol (simulated camera)")
+def _stream():
+    import gazekit.stream as st
+    from gazekit.tracker import Observation
+
+    class FakeCap:
+        n = 0
+        def read(self):
+            self.n += 1
+            if self.n > 12:
+                raise KeyboardInterrupt
+            return True, np.zeros((480, 640, 3), np.uint8)
+        def release(self):
+            pass
+
+    class FakeTracker:
+        def __init__(self, *_):
+            self.i = 0
+        def process(self, frame, want_crops=False):
+            self.i += 1
+            blink = 0.9 if self.i in (5, 6) else 0.05
+            return Observation(ok=True, features=np.full(19, 0.5),
+                               blink=blink, yaw=3.0, pitch=-2.0)
+        def close(self):
+            pass
+
+    rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    rx.bind(("127.0.0.1", 0))
+    rx.settimeout(2)
+    port = rx.getsockname()[1]
+    saved = st.open_camera, st.FaceTracker, st.build_predictor
+    st.open_camera = lambda *_a, **_k: FakeCap()
+    st.FaceTracker = FakeTracker
+    st.build_predictor = lambda *a: (lambda obs: np.array([300.0, 200.0]),
+                                     None, None)
+    try:
+        res = st.run(camera_index=0, port=port, align=False,
+                     screen=(1512, 982))
+    finally:
+        st.open_camera, st.FaceTracker, st.build_predictor = saved
+    msgs = []
+    try:
+        while True:
+            msgs.append(json.loads(rx.recv(4096)))
+    except socket.timeout:
+        pass
+    rx.close()
+    assert len(msgs) == res["samples"] == 12, (len(msgs), res)
+    keys = {"t", "x", "y", "sw", "sh", "valid", "blink", "blink_score",
+            "yaw", "pitch", "roll", "face"}
+    assert keys <= set(msgs[0]), set(msgs[0])
+    assert msgs[0]["valid"] and msgs[0]["sw"] == 1512
+    assert any(m["blink"] and not m["valid"] for m in msgs), "blink not gated"
+    assert res["blinks"] == 1, res
+    return f"{len(msgs)} datagrams, blink gated, schema ok"
 
 
 @check("journal records runs")
