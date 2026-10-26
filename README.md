@@ -104,6 +104,9 @@ error and appends a summary to `data/verify_log.jsonl`.
 $PY -m gazekit iterate            # clean -> train -> validate -> evaluate
                                   #   -> update; run after every collection
 $PY -m gazekit iterate --cnn      # also retrain the CNN on cleaned data
+$PY -m gazekit metrics            # self-diagnose the error computation:
+                                  #   synthetic ground truth, baselines,
+                                  #   axis-swap, prediction saturation
 ```
 
 Cleaning is non-destructive (bad sample ids go to `data/dataset/pruned.json`
